@@ -18,11 +18,11 @@ const statusEl = $('status');
 const textEl = $('text');
 const textFontEl = $('textFont');
 const textReplaceEl = $('textReplace');
-const amountEl = $('amount');
-const amountValEl = $('amountVal');
 const offsetValEl = $('offsetVal');
 const lowEl = $('low');
+const lowValEl = $('lowVal');
 const highEl = $('high');
+const highValEl = $('highVal');
 const displayEl = $('display');
 const ghUserEl = $('ghUser');
 const ghTokenEl = $('ghToken');
@@ -68,10 +68,9 @@ const TRACK_TODAY_COLOR = '#57606a';
 const grid = new Uint8Array(C.N);
 let offset = 0;
 let tool = 'draw';
-let amount = 3;
 let displayMode = 'grad';
-let low = 1;
-let high = 10;
+let low = 0;                // commits on background (level 0) days
+let high = 10;              // commits on drawn (level max) days
 let maxLvl = 0;
 let colorCache = C.buildColorCache(0, displayMode);
 let actual = null;          // Map<dateKey, count> | null
@@ -98,6 +97,7 @@ for (let i = 0; i < PLAN_MAX_DAYS; i++) {
 	plan.rows.push({ key: '', label: '', level: 0, target: 0, actual: -1, left: 0, today: 0 });
 }
 const planChips = [];
+const recommended = { low: 0, high: 0 };
 
 // per-offset precomputed buffers (rebuilt on offset change only)
 const cellKey = new Array(C.N);
@@ -156,6 +156,31 @@ function markDirty() {
 	scheduleRender();
 	scheduleTrackRender();
 	saveSoon();
+}
+
+// drawn cells always take the top level: hand-drawn pictures are two-tone,
+// shades only come from smooth text.
+function drawLevel() {
+	return maxLvl || 1;
+}
+
+// ---- low / high mapping (single source of truth)
+// `from` names the slider the user moved so the other one yields (high >= low).
+function setMapping(lo, hi, from) {
+	lo = C.clampInt(lo | 0, 0, C.MAP_MAX);
+	hi = C.clampInt(hi | 0, 0, C.MAP_MAX);
+	if (hi < lo) {
+		if (from === 'low') hi = lo;
+		else lo = hi;
+	}
+	low = lo;
+	high = hi;
+	lowEl.value = String(lo);
+	highEl.value = String(hi);
+	lowValEl.textContent = String(lo);
+	highValEl.textContent = String(hi);
+	refreshColors();
+	saveMappingSoon();
 }
 
 // ---- offset (single source of truth)
@@ -527,7 +552,7 @@ function pickCell(e) {
 }
 
 function paintCell(i) {
-	const v = tool === 'erase' ? 0 : amount;
+	const v = tool === 'erase' ? 0 : drawLevel();
 	if (grid[i] === v) return;
 	grid[i] = v;
 	markDirty();
@@ -569,7 +594,7 @@ function endStroke() {
 	drawing = false;
 	if (tool === 'rect' && dragA >= 0) {
 		pushUndo();
-		fillRectCells(dragA, dragB >= 0 ? dragB : dragA, amount);
+		fillRectCells(dragA, dragB >= 0 ? dragB : dragA, drawLevel());
 	}
 	dragA = -1;
 	dragB = -1;
@@ -634,7 +659,7 @@ function renderText() {
 	if (font === 'smooth') {
 		smoothText(text);
 	} else {
-		const lvl = Math.max(maxLvl, 1);
+		const lvl = drawLevel();
 		if (textReplaceEl.checked) grid.fill(0);
 		C.renderTextPixel(grid, text, font, lvl);
 	}
@@ -686,6 +711,31 @@ function smoothText(text) {
 
 // ---- storage
 const LS_KEY = 'gtm-v1';
+const LS_MAP_KEY = 'gtm-map-v1';
+let mapSaveTimer = 0;
+
+function saveMappingSoon() {
+	clearTimeout(mapSaveTimer);
+	mapSaveTimer = setTimeout(() => {
+		try {
+			localStorage.setItem(LS_MAP_KEY, low + '|' + high);
+		} catch {
+			// storage unavailable; app still works
+		}
+	}, 300);
+}
+
+function loadMapping() {
+	try {
+		const s = localStorage.getItem(LS_MAP_KEY);
+		if (!s) return;
+		const parts = s.split('|');
+		low = C.clampInt(parseInt(parts[0], 10), 0, C.MAP_MAX);
+		high = C.clampInt(parseInt(parts[1], 10), low, C.MAP_MAX);
+	} catch {
+		// corrupt save: keep defaults
+	}
+}
 
 function saveNow() {
 	try {
@@ -829,21 +879,14 @@ function setTool(t) {
 	for (const k in toolButtons) toolButtons[k].classList.toggle('on', k === t);
 }
 
-function setAmount(v) {
-	amount = v;
-	amountEl.value = String(v);
-	amountValEl.textContent = String(v);
-}
-
 $('toolDraw').addEventListener('click', () => setTool('draw'));
 $('toolErase').addEventListener('click', () => setTool('erase'));
 $('toolRect').addEventListener('click', () => setTool('rect'));
-amountEl.addEventListener('input', () => setAmount(+amountEl.value));
 $('btnFill').addEventListener('click', () => {
 	pushUndo();
-	grid.fill(amount);
+	grid.fill(drawLevel());
 	markDirty();
-	status('filled with level ' + amount);
+	status('filled');
 });
 $('btnClear').addEventListener('click', () => {
 	if (!maxLvl) return;
@@ -863,14 +906,8 @@ displayEl.addEventListener('change', () => {
 	refreshColors();
 	scheduleRender();
 });
-lowEl.addEventListener('change', () => {
-	low = C.clampInt(+lowEl.value, 0, 999);
-	refreshColors();
-});
-highEl.addEventListener('change', () => {
-	high = C.clampInt(+highEl.value, 0, 999);
-	refreshColors();
-});
+lowEl.addEventListener('input', () => setMapping(+lowEl.value, high, 'low'));
+highEl.addEventListener('input', () => setMapping(low, +highEl.value, 'high'));
 
 window.addEventListener('keydown', e => {
 	const tag = e.target && e.target.tagName;
@@ -882,9 +919,7 @@ window.addEventListener('keydown', e => {
 	}
 	if (e.ctrlKey || e.metaKey || e.altKey) return;
 	const k = e.key.toLowerCase();
-	if (k >= '1' && k <= '9') setAmount(+k);
-	else if (k === '0') setAmount(10);
-	else if (k === 'd') setTool('draw');
+	if (k === 'd') setTool('draw');
 	else if (k === 'e') setTool('erase');
 	else if (k === 'r') setTool('rect');
 	else if (k === 'f') $('btnFill').click();
@@ -901,7 +936,7 @@ function refreshLegend() {
 	for (let l = 0; l <= maxLvl; l++) {
 		const cm = C.commitsForLevel(l, maxLvl, low, high);
 		html += '<span><span class="sw" style="background:' + colorCache[l] + '"></span>'
-			+ 'L' + l + (l ? ' ≈ ' + cm + ' commits' : ' (none)') + '</span>';
+			+ 'L' + l + (l ? '' : ' background') + (cm ? ' ≈ ' + cm + ' commits' : ' (none)') + '</span>';
 	}
 	legendEl.innerHTML = html;
 }
@@ -915,13 +950,14 @@ function refreshSuggestion() {
 	const lvl = grid[todayIdx];
 	const cm = C.commitsForLevel(lvl, maxLvl, low, high);
 	let html = '<b>Today · ' + cellLabel[todayIdx] + '</b> · level ' + lvl;
-	if (lvl) html += ' → <b>~' + cm + ' commits</b>';
+	if (cm) html += ' → <b>~' + cm + ' commits</b>' + (lvl ? '' : ' (background)');
 	else html += ' — no commits needed today';
 
 	const y = todayIdx - 1;
+	const ycm = C.commitsForLevel(grid[y], maxLvl, low, high);
 	let ys = '<br><span class="muted">Yesterday · ' + cellLabel[y]
 		+ ' · planned level ' + grid[y];
-	if (grid[y]) ys += ' (~' + C.commitsForLevel(grid[y], maxLvl, low, high) + ' commits)';
+	if (ycm) ys += ' (~' + ycm + ' commits)';
 	if (actual) ys += ' · actual ' + (actual.get(cellKey[y]) || 0);
 	ys += '</span>';
 	suggestEl.innerHTML = html + ys;
@@ -1044,10 +1080,12 @@ async function doFetch() {
 		}
 		actual = res.map;
 		cacheActual(user, res.map);
-		refreshSuggestion();
-		refreshPlan();
+		const avg = C.meanDailyCommits(res.map, todayMs, C.AVG_DAYS);
+		C.recommendMapping(avg, recommended);
+		setMapping(recommended.low, recommended.high, 'fetch'); // refreshes suggestion + plan
 		scheduleRender();
-		status('synced @' + user + ' · ' + res.map.size + ' days with commits · ' + res.note);
+		status('synced @' + user + ' · ' + res.map.size + ' days with commits · ' + res.note
+			+ ' · avg ' + avg.toFixed(1) + '/day (' + C.AVG_DAYS + ' d) → low ' + low + ', high ' + high);
 	} catch (err) {
 		status('fetch failed: ' + err.message + ' — low/high mapping still works without sync');
 	}
@@ -1065,8 +1103,9 @@ function setupCanvas() {
 setupCanvas();
 setupTrackCanvas();
 loadSaved();
+loadMapping();
 setOffset(offset, { force: true });
-refreshColors();
+setMapping(low, high, 'load');
 scheduleRender();
 scheduleTrackRender();
 status('ready — paint with the pointer, or type text and hit render. autosaves locally.');

@@ -74,6 +74,28 @@
   the past). Matches GitHub's own contribution graph time direction and the
   expected "scroll down = older" convention.
 
+## low / high mapping
+
+- Level 0 is not "no commits", it is `low`. Real accounts commit on background days
+  too, so the drawn shape only shows if the background rate is the *usual* rate and
+  drawn days sit above it. `low = 0` keeps the old meaning. Every consumer (legend,
+  tooltip, suggestion, plan, shortfall) goes through `commitsForLevel`, so one
+  change there moved the whole app.
+- Two range inputs that share a constraint (`high >= low`) need a single setter
+  with a `from` argument: the slider the user is dragging wins, the other one is
+  dragged along. Clamping the moved slider instead feels broken ("it won't go
+  further") and leaves the readout lying.
+- A "draw amount" slider next to low/high was the same knob twice: amount picked a
+  level, low/high mapped levels to commits. Dropping amount (draw = top level,
+  erase = 0) made hand-drawn pictures two-tone, which is what they were anyway;
+  shades only ever came from smooth text.
+- Recommendation from the average: `low = round(mean of the last 90 days, today
+  excluded)`, `high = max(2 * low, low + 5)`. Today is excluded because it is
+  in progress and would drag the mean down. The `+5` floor matters for quiet
+  accounts where doubling `1` would give an invisible picture.
+- The sliders' `input` event (not `change`) keeps the legend / plan live while
+  dragging; `refreshColors` is cheap enough.
+
 ## commit plan / carry
 
 - A plan window that starts at today must not try to also cover the past: rows are

@@ -137,11 +137,39 @@ export function buildColorCache(max, mode) {
 	return out;
 }
 
-// Level -> commits. L=0 means "do not commit". L=max always maps to high.
+// Level -> commits. Level 0 (background / erased) is `low`, level max is `high`;
+// intermediate levels (smooth text) interpolate on the same t(L) as the colors.
 export function commitsForLevel(level, max, low, high) {
-	if (level <= 0 || max <= 0 || low <= 0) return 0;
 	if (high < low) high = low;
 	return Math.round(low + (high - low) * levelT(level, max));
+}
+
+// ---------------------------------------------------------------- mapping recommendation
+
+export const MAP_MAX = 50;      // slider range for low / high (commits per day)
+export const MIN_SPREAD = 5;    // drawn days are at least this far above background
+export const AVG_DAYS = 90;
+
+// Mean commits per day over the `days` days before todayMs (today is excluded:
+// it is still in progress). Dates absent from the map count as 0. Walks with
+// setDate so DST days do not shift the keys.
+export function meanDailyCommits(map, todayMs, days) {
+	const d = new Date(todayMs);
+	let sum = 0;
+	for (let i = 0; i < days; i++) {
+		d.setDate(d.getDate() - 1);
+		sum += map.get(dateKeyOf(d.getTime())) || 0;
+	}
+	return sum / days;
+}
+
+// Background days keep the usual rate, drawn days double it (at least +MIN_SPREAD)
+// so the picture stands out from the day-to-day noise. Fills the caller's out.
+export function recommendMapping(avg, out) {
+	const low = Math.min(MAP_MAX, Math.round(avg));
+	out.low = low;
+	out.high = Math.min(MAP_MAX, Math.max(low * 2, low + MIN_SPREAD));
+	return out;
 }
 
 // ---------------------------------------------------------------- commit plan

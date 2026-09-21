@@ -89,8 +89,12 @@ eq(qcache[1], 'rgb(155,233,168)', 'quant L1 -> #9be9a8');
 eq(qcache[2], 'rgb(64,196,99)', 'quant L2 -> #40c463');
 
 // ---- commits
-eq(C.commitsForLevel(0, 4, 1, 10), 0, 'level 0 -> 0 commits');
-eq(C.commitsForLevel(4, 4, 1, 10), 10, 'level=max -> high');
+eq(C.commitsForLevel(0, 4, 0, 10), 0, 'level 0 with low 0 -> 0 commits');
+eq(C.commitsForLevel(0, 4, 5, 10), 5, 'level 0 -> low (background days keep the usual rate)');
+eq(C.commitsForLevel(0, 0, 5, 10), 5, 'empty grid: level 0 still reads low');
+eq(C.commitsForLevel(2, 4, 5, 10), 8, 'level 2/4 with low 5 -> 5 + 5*0.6 = 8');
+eq(C.commitsForLevel(1, 1, 12, 5), 12, 'high below low is lifted to low');
+eq(C.commitsForLevel(4, 4, 0, 10), 10, 'level=max -> high');
 eq(C.commitsForLevel(1, 4, 1, 10), 5, 'level 1/4 -> 1+9*0.4 = 4.6 -> 5');
 eq(C.commitsForLevel(1, 1, 1, 10), 10, 'max=1: only level is high');
 let mono = true;
@@ -118,7 +122,7 @@ const pg = new Uint8Array(C.N);
 pg[ti] = 4;      // today at max level
 pg[ti - 1] = 4;  // yesterday at max level
 
-let n = C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, null, 0, plan);
+let n = C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 0, 10, null, 0, plan);
 eq(n, 6, 'plan truncates at the grid end (today sits in the last column)');
 eq(plan.rows[0].key, '2026-09-21', 'plan row 0 is today');
 eq(plan.rows[0].label, 'Mon Sep 21, 2026', 'plan row 0 label');
@@ -136,37 +140,37 @@ eq(plan.shortfall, 0, 'no map -> no shortfall');
 const amap = new Map();
 amap.set('2026-09-21', 4);  // 4 commits today
 amap.set('2026-09-20', 2);  // 2 commits yesterday
-eq(C.shortfallOf(pg, pkeys, amap, ti - 1, ti - 1, 4, 1, 10), 8, 'shortfallOf yesterday = target 10 - actual 2');
-eq(C.shortfallOf(pg, pkeys, amap, ti - 7, ti - 1, 4, 1, 10), 8, 'shortfallOf over a week only counts unmet days');
-eq(C.shortfallOf(pg, pkeys, amap, ti, ti, 4, 1, 10), 6, 'shortfallOf includes today when asked');
+eq(C.shortfallOf(pg, pkeys, amap, ti - 1, ti - 1, 4, 0, 10), 8, 'shortfallOf yesterday = target 10 - actual 2');
+eq(C.shortfallOf(pg, pkeys, amap, ti - 7, ti - 1, 4, 0, 10), 8, 'shortfallOf over a week only counts unmet days');
+eq(C.shortfallOf(pg, pkeys, amap, ti, ti, 4, 0, 10), 6, 'shortfallOf includes today when asked');
 
-C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, amap, 0, plan);
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 0, 10, amap, 0, plan);
 eq(plan.rows[0].actual, 4, 'synced actual for today');
 eq(plan.rows[0].left, 6, 'left = target - actual');
 eq(plan.rows[1].actual, 0, 'synced future day -> actual 0, not -1');
 eq(plan.rows[1].left, 0, 'future day without a target has no work');
 eq(plan.shortfall, 0, 'carry off -> shortfall 0');
 
-C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, amap, 7, plan);
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 0, 10, amap, 7, plan);
 eq(plan.shortfall, 8, 'carry on -> shortfall of the previous 7 days');
 eq(plan.rows[0].left, 14, "today's left carries the shortfall");
 eq(plan.rows[1].left, 0, 'carry only touches today');
 
 const metmap = new Map([['2026-09-21', 12]]);
-C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, metmap, 0, plan);
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 0, 10, metmap, 0, plan);
 eq(plan.rows[0].left, 0, 'actual above target -> left 0');
 eq(plan.rows[0].target, 10, 'target stays the planned number when over-achieved');
-C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, metmap, 7, plan);
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 0, 10, metmap, 7, plan);
 eq(plan.shortfall, 10, 'a date missing from the map counts as 0 commits');
 
 C.buildGridDates(todayMs, 4, pkeys, plabels, pmonths);
 const ti4 = C.todayIndex(pkeys, todayMs);
 eq(ti4, 337, 'plan: offset +4 today index = 337');
-eq(C.buildCommitPlan(pg, pkeys, plabels, ti4, 30, 4, 1, 10, null, 0, plan), 30, 'plan caps at the requested days');
+eq(C.buildCommitPlan(pg, pkeys, plabels, ti4, 30, 4, 0, 10, null, 0, plan), 30, 'plan caps at the requested days');
 
 C.buildGridDates(todayMs, -52, pkeys, plabels, pmonths);
 eq(C.todayIndex(pkeys, todayMs), -1, 'offset -52 puts today outside the grid');
-eq(C.buildCommitPlan(pg, pkeys, plabels, -1, 7, 4, 1, 10, null, 0, plan), 0, 'off-grid plan has no rows');
+eq(C.buildCommitPlan(pg, pkeys, plabels, -1, 7, 4, 0, 10, null, 0, plan), 0, 'off-grid plan has no rows');
 eq(plan.n, 0, 'off-grid plan leaves n = 0');
 eq(plan.total, 0, 'off-grid plan leaves total = 0');
 eq(plan.shortfall, 0, 'off-grid plan leaves shortfall = 0');
@@ -174,10 +178,45 @@ eq(plan.shortfall, 0, 'off-grid plan leaves shortfall = 0');
 // level 0 today -> nothing to do, but the row still exists
 C.buildGridDates(todayMs, 0, pkeys, plabels, pmonths);
 const pg0 = new Uint8Array(C.N);
-C.buildCommitPlan(pg0, pkeys, plabels, ti, 7, 4, 1, 10, null, 0, plan);
+C.buildCommitPlan(pg0, pkeys, plabels, ti, 7, 4, 0, 10, null, 0, plan);
 eq(plan.rows[0].target, 0, 'empty today -> target 0');
 eq(plan.rows[0].left, 0, 'empty today -> left 0');
 eq(plan.dueDays, 0, 'empty grid -> no due days');
+
+// nonzero low: background days carry a target too
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 5, 10, null, 0, plan);
+eq(plan.rows[0].target, 10, 'low 5: drawn day -> high');
+eq(plan.rows[1].target, 5, 'low 5: background day -> low');
+eq(plan.total, 35, 'low 5: total = 10 + 5 * 5');
+eq(plan.dueDays, 6, 'low 5: every day is due');
+eq(C.shortfallOf(pg, pkeys, new Map([['2026-09-20', 2]]), ti - 2, ti - 1, 4, 5, 10), 13,
+	'low 5: shortfall counts background days (5 - 0) + drawn day (10 - 2)');
+
+// ---- mapping recommendation
+const rec = { low: 0, high: 0 };
+C.recommendMapping(0, rec);
+eq(rec.low, 0, 'avg 0 -> low 0');
+eq(rec.high, 5, 'avg 0 -> high = MIN_SPREAD');
+C.recommendMapping(4.6, rec);
+eq(rec.low, 5, 'avg 4.6 -> low 5');
+eq(rec.high, 10, 'avg 4.6 -> high 10 (double)');
+C.recommendMapping(1.2, rec);
+eq(rec.low, 1, 'avg 1.2 -> low 1');
+eq(rec.high, 6, 'avg 1.2 -> high 6 (low + spread beats double)');
+C.recommendMapping(40, rec);
+eq(rec.high, C.MAP_MAX, 'recommendation clamps to MAP_MAX');
+ok(rec.high >= rec.low, 'high never below low');
+
+const avgMap = new Map();
+const cursor = new Date(todayMs);
+for (let i = 0; i < 30; i++) {
+	cursor.setDate(cursor.getDate() - 1);
+	avgMap.set(C.dateKeyOf(cursor.getTime()), 3);
+}
+avgMap.set(C.dateKeyOf(todayMs), 99); // today must not count
+eq(C.meanDailyCommits(avgMap, todayMs, 90), 1, 'mean over 90 days: 30 * 3 / 90 = 1, today excluded');
+eq(C.meanDailyCommits(avgMap, todayMs, 30), 3, 'mean over 30 days: every day 3');
+eq(C.meanDailyCommits(new Map(), todayMs, 90), 0, 'empty map -> 0');
 
 // ---- storage round trip
 function randGrid(seed) {

@@ -64,9 +64,9 @@ function makeEl(id) {
 }
 
 const IDS = ['plot', 'plotWrap', 'tip', 'range', 'suggest', 'legend', 'status',
-	'text', 'textFont', 'textReplace', 'amount', 'amountVal', 'offsetVal',
+	'text', 'textFont', 'textReplace', 'offsetVal',
 	'track', 'trackWrap', 'trackLabel', 'plan', 'planSummary', 'planDays', 'planCarry',
-	'low', 'high', 'display', 'ghUser', 'ghToken', 'btnFetch', 'fileImport',
+	'low', 'lowVal', 'high', 'highVal', 'display', 'ghUser', 'ghToken', 'btnFetch', 'fileImport',
 	'btnExport', 'btnPng', 'btnImport', 'btnPaste', 'toolDraw', 'toolErase', 'toolRect',
 	'btnFill', 'btnClear', 'btnUndo', 'btnRender'];
 const els = {};
@@ -80,6 +80,8 @@ els.planDays.value = '14';
 els.planCarry.checked = true;
 els.textFont.value = 'auto';
 els.textReplace.checked = true;
+els.low.value = '0';
+els.high.value = '10';
 
 const store = {};
 globalThis.document = {
@@ -103,12 +105,16 @@ globalThis.localStorage = {
 Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
 globalThis.prompt = () => null;
 globalThis.confirm = () => true;
-// stubbed contributions provider (deno api shape): today 3 commits, yesterday 1
-globalThis.fetch = async () => ({
-	ok: true,
-	status: 200,
-	json: async () => [{ date: '2026-09-21', count: 3 }, { date: '2026-09-20', count: 1 }],
-});
+// stubbed contributions provider (deno api shape): today 3 commits, yesterday 1,
+// then 4 commits on each of the 88 days before -> 90-day mean (today excluded)
+// = (1 + 88 * 4) / 90 = 3.92 -> recommended low 4, high max(8, 4 + 5) = 9
+const stubDays = [{ date: '2026-09-21', count: 3 }, { date: '2026-09-20', count: 1 }];
+const stubCursor = new Date(2026, 8, 20);
+for (let i = 0; i < 88; i++) {
+	stubCursor.setDate(stubCursor.getDate() - 1);
+	stubDays.push({ date: C.dateKeyOf(stubCursor.getTime()), count: 4 });
+}
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => stubDays });
 
 // ---- run the app
 await import('../app.js');
@@ -129,6 +135,7 @@ ok(els.status.textContent.includes('ready'), 'init status set');
 ok(els.legend.innerHTML.includes('empty'), 'empty-grid legend hint');
 ok(/^\d{4}-\d{2}-\d{2}  →  \d{4}-\d{2}-\d{2}$/.test(els.range.textContent), 'date range label: ' + els.range.textContent);
 ok(els.offsetVal.textContent === '0', 'offset readout shows 0 at start');
+ok(els.lowVal.textContent === '0' && els.highVal.textContent === '10', 'mapping readouts at defaults: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
 
 // today (2026-09-21 Monday) must be highlighted window: offset 0 ends Sat 2026-09-26
 ok(els.range.textContent.endsWith('2026-09-26'), 'range ends this Saturday: ' + els.range.textContent);
@@ -146,17 +153,37 @@ els.plot.fire('pointermove', { clientX: 30 + 20 * PITCH + 8, clientY: 18 + 3 * P
 ok(!els.tip.hidden, 'tooltip visible on hover');
 ok(els.tip.textContent.includes('level 0'), 'tooltip shows level 0: ' + els.tip.textContent);
 
-// paint a 2-cell stroke with default amount 3
+// paint a 2-cell stroke: an empty grid draws level 1
 els.plot.fire('pointerdown', { clientX: 30 + 20 * PITCH + 8, clientY: 18 + 3 * PITCH + 8, pointerId: 1, preventDefault() {} });
 els.plot.fire('pointermove', { clientX: 30 + 21 * PITCH + 8, clientY: 18 + 3 * PITCH + 8, pointerId: 1, preventDefault() {} });
 els.plot.fire('pointerup', { pointerId: 1 });
 await sleep(400); // autosave debounce
-ok(els.legend.innerHTML.includes('L3'), 'legend shows L3 after paint: ' + els.legend.innerHTML.slice(0, 120));
+ok(els.legend.innerHTML.includes('L1 ≈ 10 commits'), 'legend maps the drawn level to high: ' + els.legend.innerHTML.slice(0, 160));
+ok(els.legend.innerHTML.includes('L0 background (none)'), 'legend: background (none) while low is 0');
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion box has Today row');
 const saved = store['gtm-v1'];
 ok(saved && saved.startsWith('GTM1|0|'), 'autosaved GTM1 string exists');
 const parsed = C.parseGrid(saved);
-ok(parsed.grid[20 * 7 + 3] === 3 && parsed.grid[21 * 7 + 3] === 3, 'stroke painted level 3 into saved grid');
+ok(parsed.grid[20 * 7 + 3] === 1 && parsed.grid[21 * 7 + 3] === 1, 'stroke painted level 1 into saved grid');
+
+// low / high sliders: readouts, cross-clamp, persistence
+els.low.value = '12';
+els.low.fire('input');
+ok(els.lowVal.textContent === '12' && els.highVal.textContent === '12', 'low pushed above high drags high up: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
+els.high.value = '20';
+els.high.fire('input');
+ok(els.highVal.textContent === '20', 'high slider readout: ' + els.highVal.textContent);
+els.high.value = '5';
+els.high.fire('input');
+ok(els.lowVal.textContent === '5' && els.highVal.textContent === '5', 'high pulled below low drags low down: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
+ok(els.legend.innerHTML.includes('L0 background ≈ 5 commits'), 'legend names the background number: ' + els.legend.innerHTML.slice(0, 160));
+els.high.value = '10';
+els.high.fire('input');
+await sleep(400);
+ok(store['gtm-map-v1'] === '5|10', 'mapping persisted: ' + store['gtm-map-v1']);
+ok(els.suggest.innerHTML.includes('~5 commits</b> (background)'), 'today (empty cell) suggests the background number: ' + els.suggest.innerHTML.slice(0, 160));
+els.low.value = '0';
+els.low.fire('input');
 
 // render pixel text "HI" (replaces grid)
 els.text.value = 'HI';
@@ -169,11 +196,11 @@ let lit = 0, allLvl3 = true;
 for (let i = 0; i < C.N; i++) {
 	if (saved2.grid[i]) {
 		lit++;
-		if (saved2.grid[i] !== 3) allLvl3 = false;
+		if (saved2.grid[i] !== 1) allLvl3 = false;
 	}
 }
 ok(lit === 28, 'rendered "HI" = 28 lit cells, got ' + lit);
-ok(allLvl3, 'text painted at level 3 (current max)');
+ok(allLvl3, 'text painted at the draw level (current max)');
 
 // track slider drag into future: x = midpoint (offset 0) + half usable -> offset ~ +26
 const TRACK_INSET = 30;
@@ -212,19 +239,17 @@ await sleep(50);
 ok(parseInt(els.offsetVal.textContent, 10) === 0, 'track Home resets offset to 0: ' + els.offsetVal.textContent);
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion back to Today');
 
-// plan follows painted levels: amount 2 into today (Mon of last column) and yesterday (Sun)
-els.amount.value = '2';
-els.amount.fire('input');
+// plan follows painted cells: draw into today (Mon of last column) and yesterday (Sun)
 paintAt(52, 1);
 paintAt(52, 0);
 await sleep(400);
 // yesterday is outside the plan window (rows start today), it only feeds the shortfall
-ok(els.planSummary.textContent === '6 days · 8 commits on 1 day', 'plan summary after painting: ' + els.planSummary.textContent);
-ok(chip(0).children[1].textContent === 'L2 · 8 commits', 'today chip level + commits: ' + chip(0).children[1].textContent);
+ok(els.planSummary.textContent === '6 days · 10 commits on 1 day', 'plan summary after painting: ' + els.planSummary.textContent);
+ok(chip(0).children[1].textContent === 'L1 · 10 commits', 'today chip level + commits: ' + chip(0).children[1].textContent);
 ok(chip(0).children[2].textContent === 'planned', 'today chip without sync reads planned: ' + chip(0).children[2].textContent);
 ok(chip(0).className.includes('due'), 'today chip marked due: ' + chip(0).className);
 ok(chip(1).children[2].textContent === 'rest', 'empty future day reads rest: ' + chip(1).children[2].textContent);
-ok(chip(0).title === 'plan 8 commits', 'chip title without sync: ' + chip(0).title);
+ok(chip(0).title === 'plan 10 commits', 'chip title without sync: ' + chip(0).title);
 
 // the plan never runs past the end of the grid, whatever the window says
 els.planDays.value = '30';
@@ -234,21 +259,34 @@ els.planDays.value = '7';
 els.planDays.fire('change');
 ok(els.plan.children.length === 6, 'short window keeps the same rows: ' + els.plan.children.length);
 
-// sync (stubbed contributions api) -> actual counts, carry of the 7 day shortfall
+// sync (stubbed contributions api) -> recommended low / high from the 90-day mean,
+// actual counts, carry of the 7 day shortfall
 els.ghUser.value = 'octocat';
 els.btnFetch.click();
 await sleep(100);
 ok(els.status.textContent.includes('synced @octocat'), 'fetch status: ' + els.status.textContent);
+ok(els.status.textContent.includes('avg 3.9/day (90 d) → low 4, high 9'), 'fetch reports the recommendation: ' + els.status.textContent);
+ok(els.lowVal.textContent === '4' && els.highVal.textContent === '9', 'sliders follow the recommendation: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
+ok(els.low.value === '4' && els.high.value === '9', 'slider inputs updated too');
 ok(els.suggest.innerHTML.includes('actual 1'), 'suggestion shows yesterday actual');
-ok(chip(0).children[2].textContent === '3 done · 12 left', 'today chip with sync + carry: ' + chip(0).children[2].textContent);
-ok(els.planSummary.textContent.includes('behind 7 over the last 7 days'), 'plan summary shortfall: ' + els.planSummary.textContent);
-ok(chip(0).title.includes('+ 7 carried'), 'chip title explains the carry: ' + chip(0).title);
+// today: target 9 (drawn), 3 done, 6 left; last 7 days: yesterday drawn 9 - 1 = 8,
+// the 6 background days before it 4 each and all met by the stub's 4 commits
+ok(chip(0).children[2].textContent === '3 done · 14 left', 'today chip with sync + carry: ' + chip(0).children[2].textContent);
+ok(chip(1).children[1].textContent === 'L0 · 4 commits', 'background day chip carries low: ' + chip(1).children[1].textContent);
+ok(els.planSummary.textContent === '6 days · 29 commits on 6 days · behind 8 over the last 7 days', 'plan summary with low 4: ' + els.planSummary.textContent);
+ok(chip(0).title === 'plan 9 commits + 8 carried from the last 7 days', 'chip title explains the carry: ' + chip(0).title);
 els.planCarry.checked = false;
 els.planCarry.fire('change');
-ok(chip(0).children[2].textContent === '3 done · 5 left', 'carry off -> plain target left: ' + chip(0).children[2].textContent);
+ok(chip(0).children[2].textContent === '3 done · 6 left', 'carry off -> plain target left: ' + chip(0).children[2].textContent);
 ok(!els.planSummary.textContent.includes('behind'), 'carry off -> no shortfall in summary');
 els.planCarry.checked = true;
 els.planCarry.fire('change');
+// a 6 h cache hit reapplies the same recommendation
+els.low.value = '0';
+els.low.fire('input');
+els.btnFetch.click();
+await sleep(100);
+ok(els.status.textContent.includes('cache (6h)') && els.lowVal.textContent === '4', 'cached fetch re-recommends: ' + els.status.textContent);
 
 // paste import of a known payload
 const g = new Uint8Array(C.N);

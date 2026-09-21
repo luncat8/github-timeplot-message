@@ -28,16 +28,16 @@
 		flex-direction: column;
 		gap: 10px;
 	}
-	header {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 12px;
-		align-items: center;
-		justify-content: space-between;
-	}
 	h1 { font-size: 16px; margin: 0; font-weight: 600; }
 	h1 small { color: var(--muted); font-weight: 400; }
-	.hgroup { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+	.step {
+		color: var(--muted);
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		min-width: 64px;
+	}
 	.row {
 		display: flex;
 		flex-wrap: wrap;
@@ -56,7 +56,7 @@
 		font-size: 13px;
 		white-space: nowrap;
 	}
-	input[type="text"], input[type="number"], input[type="password"] {
+	input[type="text"], input[type="password"] {
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		padding: 3px 8px;
@@ -64,8 +64,8 @@
 		color: var(--fg);
 		font: inherit;
 	}
-	input[type="number"] { width: 64px; }
-	input[type="range"] { vertical-align: middle; }
+	input[type="range"] { vertical-align: middle; width: 120px; }
+	label b { color: var(--fg); min-width: 1.6em; text-align: right; }
 	select {
 		border: 1px solid var(--border);
 		border-radius: 6px;
@@ -146,6 +146,7 @@
 		z-index: 5;
 	}
 	.suggest { flex-basis: 100%; font-size: 13px; }
+	#legend { flex-basis: 100%; }
 	#plan { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
 	.pd {
 		display: flex;
@@ -176,7 +177,7 @@
 		vertical-align: -3px;
 		border: 1px solid rgba(0,0,0,.08);
 	}
-	footer { display: flex; flex-direction: column; gap: 4px; }
+	footer { padding: 0 10px; }
 	#status { min-height: 1.2em; }
 </style>
 </head>
@@ -184,33 +185,47 @@
 <div id="app">
 	<header>
 		<h1>github timeplot message <small>paint your profile</small></h1>
-		<div class="hgroup">
-			<label>github
-				<input id="ghUser" type="text" placeholder="username" spellcheck="false" style="width:110px">
-			</label>
-			<label>
-				<input id="ghToken" type="password" placeholder="optional PAT" spellcheck="false" style="width:130px">
-			</label>
-			<button id="btnFetch" title="fetch contributions for overlay + suggestions">fetch</button>
-			<button id="btnExport" title="copy GTM1 string + download .gtm">export</button>
-			<button id="btnPng" title="download rendered grid as PNG">PNG</button>
-			<button id="btnImport" title="import from .gtm/.txt/.json file">import</button>
-			<button id="btnPaste" title="paste a GTM1 string">paste</button>
-			<input type="file" id="fileImport" accept=".gtm,.txt,.json,text/plain,application/json" hidden>
-		</div>
 	</header>
 
-	<div id="plotWrap">
-		<canvas id="plot"></canvas>
-		<div id="trackWrap">
-			<canvas id="track" tabindex="0" aria-label="week offset"></canvas>
-			<div id="trackLabel" hidden></div>
-		</div>
-		<div id="tip" hidden></div>
-	</div>
+	<section class="row">
+		<span class="step">1 fetch</span>
+		<label>github
+			<input id="ghUser" type="text" placeholder="username" spellcheck="false" style="width:130px">
+		</label>
+		<label>
+			<input id="ghToken" type="password" placeholder="optional PAT" spellcheck="false" style="width:140px">
+		</label>
+		<button id="btnFetch" title="fetch contributions: overlay dots, done counts, recommended low / high">fetch</button>
+		<span class="muted">sets low / high from your average, shows what is already done</span>
+	</section>
 
 	<section class="row">
-		<label class="grow">text
+		<span class="step">2 tools</span>
+		<button id="toolDraw" class="on" title="draw (D)">draw</button>
+		<button id="toolErase" title="erase (E)">erase</button>
+		<button id="toolRect" title="rectangle drag (R)">rect</button>
+		<label title="commits on background / erased days">low / erase
+			<input id="low" type="range" min="0" max="50" step="1" value="0">
+			<b id="lowVal">0</b>
+		</label>
+		<label title="commits on drawn days">high / draw
+			<input id="high" type="range" min="0" max="50" step="1" value="10">
+			<b id="highVal">10</b>
+		</label>
+		<button id="btnFill" title="fill grid with the draw level (F)">fill</button>
+		<button id="btnClear" title="clear grid (C)">clear</button>
+		<button id="btnUndo" title="undo (Ctrl+Z)">undo</button>
+		<label>display
+			<select id="display">
+				<option value="grad">gradient</option>
+				<option value="quant">github</option>
+			</select>
+		</label>
+	</section>
+
+	<section class="row">
+		<span class="step">3 text</span>
+		<label class="grow">
 			<input id="text" type="text" maxlength="40" placeholder="HI" spellcheck="false" style="flex:1;min-width:140px">
 		</label>
 		<select id="textFont" title="text render style">
@@ -225,43 +240,25 @@
 		<button id="btnRender">render</button>
 	</section>
 
-	<section class="row">
-		<button id="toolDraw" class="on" title="draw (D)">draw</button>
-		<button id="toolErase" title="erase (E)">erase</button>
-		<button id="toolRect" title="rectangle drag (R)">rect</button>
-		<label>amount
-			<input id="amount" type="range" min="1" max="10" step="1" value="3">
-			<b id="amountVal">3</b>
-		</label>
-		<button id="btnFill" title="fill grid with amount (F)">fill</button>
-		<button id="btnClear" title="clear grid (C)">clear</button>
-		<button id="btnUndo" title="undo (Ctrl+Z)">undo</button>
-		<label>display
-			<select id="display">
-				<option value="grad">gradient</option>
-				<option value="quant">github</option>
-			</select>
-		</label>
-	</section>
+	<div id="plotWrap">
+		<canvas id="plot"></canvas>
+		<div id="trackWrap">
+			<canvas id="track" tabindex="0" aria-label="week offset"></canvas>
+			<div id="trackLabel" hidden></div>
+		</div>
+		<div id="tip" hidden></div>
+	</div>
 
 	<section class="row">
+		<span class="step">4 info</span>
 		<span id="offsetReadout">offset <b id="offsetVal">0</b> w</span>
 		<span id="range" class="muted"></span>
-	</section>
-
-	<section class="row">
-		<label>low
-			<input id="low" type="number" min="0" max="999" value="1">
-		</label>
-		<label>high
-			<input id="high" type="number" min="0" max="999" value="10">
-		</label>
-		<span class="muted">commits mapped to level 1 … max</span>
+		<div id="legend"></div>
 		<div id="suggest" class="suggest"></div>
 	</section>
 
 	<section class="row">
-		<span class="muted">commit plan</span>
+		<span class="step">5 plan</span>
 		<label>days
 			<select id="planDays">
 				<option value="7">7</option>
@@ -276,8 +273,16 @@
 		<div id="plan"></div>
 	</section>
 
+	<section class="row">
+		<span class="step">6 share</span>
+		<button id="btnExport" title="copy GTM1 string + download .gtm">export</button>
+		<button id="btnPng" title="download rendered grid as PNG">PNG</button>
+		<button id="btnImport" title="import from .gtm/.txt/.json file">import</button>
+		<button id="btnPaste" title="paste a GTM1 string">paste</button>
+		<input type="file" id="fileImport" accept=".gtm,.txt,.json,text/plain,application/json" hidden>
+	</section>
+
 	<footer>
-		<div id="legend"></div>
 		<div id="status" class="muted"></div>
 	</footer>
 </div>
