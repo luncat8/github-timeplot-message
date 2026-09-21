@@ -103,6 +103,82 @@ for (let l = 1; l <= 10; l++) {
 ok(mono, 'commits monotone in level (max=10)');
 eq(C.commitsForLevel(10, 10, 1, 10), 10, 'level 10/10 -> high');
 
+// ---- commit plan
+const pkeys = new Array(C.N);
+const plabels = new Array(C.N);
+const pmonths = new Array(C.W);
+C.buildGridDates(todayMs, 0, pkeys, plabels, pmonths);
+const ti = C.todayIndex(pkeys, todayMs);
+eq(ti, 365, 'plan: today index at offset 0 = 365');
+
+const plan = { rows: [], n: 0, total: 0, dueDays: 0, shortfall: 0 };
+for (let i = 0; i < 30; i++) plan.rows.push({ key: '', label: '', level: 0, target: 0, actual: -1, left: 0, today: 0 });
+
+const pg = new Uint8Array(C.N);
+pg[ti] = 4;      // today at max level
+pg[ti - 1] = 4;  // yesterday at max level
+
+let n = C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, null, 0, plan);
+eq(n, 6, 'plan truncates at the grid end (today sits in the last column)');
+eq(plan.rows[0].key, '2026-09-21', 'plan row 0 is today');
+eq(plan.rows[0].label, 'Mon Sep 21, 2026', 'plan row 0 label');
+eq(plan.rows[1].key, '2026-09-22', 'plan row 1 is tomorrow');
+eq(plan.rows[0].today, 1, 'row 0 flagged today');
+eq(plan.rows[1].today, 0, 'later rows are not today');
+eq(plan.rows[0].target, 10, 'level max -> high commits');
+eq(plan.rows[0].actual, -1, 'no sync data -> actual -1');
+eq(plan.rows[0].left, 10, 'no sync -> left = target');
+eq(plan.rows[1].left, 0, 'empty day -> left 0');
+eq(plan.total, 10, 'total = sum of targets');
+eq(plan.dueDays, 1, 'dueDays counts days with a target');
+eq(plan.shortfall, 0, 'no map -> no shortfall');
+
+const amap = new Map();
+amap.set('2026-09-21', 4);  // 4 commits today
+amap.set('2026-09-20', 2);  // 2 commits yesterday
+eq(C.shortfallOf(pg, pkeys, amap, ti - 1, ti - 1, 4, 1, 10), 8, 'shortfallOf yesterday = target 10 - actual 2');
+eq(C.shortfallOf(pg, pkeys, amap, ti - 7, ti - 1, 4, 1, 10), 8, 'shortfallOf over a week only counts unmet days');
+eq(C.shortfallOf(pg, pkeys, amap, ti, ti, 4, 1, 10), 6, 'shortfallOf includes today when asked');
+
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, amap, 0, plan);
+eq(plan.rows[0].actual, 4, 'synced actual for today');
+eq(plan.rows[0].left, 6, 'left = target - actual');
+eq(plan.rows[1].actual, 0, 'synced future day -> actual 0, not -1');
+eq(plan.rows[1].left, 0, 'future day without a target has no work');
+eq(plan.shortfall, 0, 'carry off -> shortfall 0');
+
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, amap, 7, plan);
+eq(plan.shortfall, 8, 'carry on -> shortfall of the previous 7 days');
+eq(plan.rows[0].left, 14, "today's left carries the shortfall");
+eq(plan.rows[1].left, 0, 'carry only touches today');
+
+const metmap = new Map([['2026-09-21', 12]]);
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, metmap, 0, plan);
+eq(plan.rows[0].left, 0, 'actual above target -> left 0');
+eq(plan.rows[0].target, 10, 'target stays the planned number when over-achieved');
+C.buildCommitPlan(pg, pkeys, plabels, ti, 7, 4, 1, 10, metmap, 7, plan);
+eq(plan.shortfall, 10, 'a date missing from the map counts as 0 commits');
+
+C.buildGridDates(todayMs, 4, pkeys, plabels, pmonths);
+const ti4 = C.todayIndex(pkeys, todayMs);
+eq(ti4, 337, 'plan: offset +4 today index = 337');
+eq(C.buildCommitPlan(pg, pkeys, plabels, ti4, 30, 4, 1, 10, null, 0, plan), 30, 'plan caps at the requested days');
+
+C.buildGridDates(todayMs, -52, pkeys, plabels, pmonths);
+eq(C.todayIndex(pkeys, todayMs), -1, 'offset -52 puts today outside the grid');
+eq(C.buildCommitPlan(pg, pkeys, plabels, -1, 7, 4, 1, 10, null, 0, plan), 0, 'off-grid plan has no rows');
+eq(plan.n, 0, 'off-grid plan leaves n = 0');
+eq(plan.total, 0, 'off-grid plan leaves total = 0');
+eq(plan.shortfall, 0, 'off-grid plan leaves shortfall = 0');
+
+// level 0 today -> nothing to do, but the row still exists
+C.buildGridDates(todayMs, 0, pkeys, plabels, pmonths);
+const pg0 = new Uint8Array(C.N);
+C.buildCommitPlan(pg0, pkeys, plabels, ti, 7, 4, 1, 10, null, 0, plan);
+eq(plan.rows[0].target, 0, 'empty today -> target 0');
+eq(plan.rows[0].left, 0, 'empty today -> left 0');
+eq(plan.dueDays, 0, 'empty grid -> no due days');
+
 // ---- storage round trip
 function randGrid(seed) {
 	const g = new Uint8Array(C.N);
@@ -161,6 +237,16 @@ ok('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('').every(c => C.FONT35[c]), 'FO
 eq(C.textWidth57('HI'), 11, '5x7 width of "HI" = 11');
 eq(C.textWidth57('HELLO WORLD'), 65, '5x7 too wide for 53 -> needs 3x5');
 eq(C.textWidth35('HELLO WORLD'), 43, '3x5 width of "HELLO WORLD" = 43');
+
+// auto font fit: 5x7 up to 9 chars (53 cols), 3x5 up to 13 chars (51 cols)
+eq(C.pickPixelFont('HI'), '57', 'auto font: short text -> 5x7');
+eq(C.pickPixelFont('ABCDEFGHI'), '57', 'auto font: 9 chars = 53 cols -> 5x7');
+eq(C.pickPixelFont('ABCDEFGHIJ'), '35', 'auto font: 10 chars = 59 cols -> 3x5');
+eq(C.pickPixelFont('HELLO WORLD'), '35', 'auto font: 11 chars -> 3x5');
+eq(C.pickPixelFont('ABCDEFGHIJKLM'), '35', 'auto font: 13 chars = 51 cols -> 3x5');
+eq(C.pickPixelFont('ABCDEFGHIJKLMN'), null, 'auto font: 14 chars = 55 cols -> null');
+eq(C.pickPixelFont('   '), null, 'auto font: blank -> null');
+eq(C.pickPixelFont(' hi '), '57', 'auto font: trims before measuring');
 
 // pixel render: "HI" into empty grid at level 4
 const gp = new Uint8Array(C.N);

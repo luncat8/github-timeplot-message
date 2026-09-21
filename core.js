@@ -144,6 +144,61 @@ export function commitsForLevel(level, max, low, high) {
 	return Math.round(low + (high - low) * levelT(level, max));
 }
 
+// ---------------------------------------------------------------- commit plan
+
+// Unmet commits over grid indices [fromIdx, toIdx]. A date missing from the map
+// counts as 0 commits: the fetchers cover the whole grid range, so absent
+// really means "nothing committed".
+export function shortfallOf(grid, cellKey, actualMap, fromIdx, toIdx, max, low, high) {
+	let sum = 0;
+	if (fromIdx < 0) fromIdx = 0;
+	for (let i = fromIdx; i <= toIdx; i++) {
+		const target = commitsForLevel(grid[i], max, low, high);
+		if (!target) continue;
+		const done = actualMap.get(cellKey[i]) || 0;
+		if (done < target) sum += target - done;
+	}
+	return sum;
+}
+
+// Fills the caller-owned plan (reused across refreshes, no per-refresh alloc):
+//   plan.rows[i] = { key, label, level, target, actual, left, today }, 0 <= i < plan.n
+//   plan.n, plan.total, plan.dueDays, plan.shortfall
+// Row 0 is today; rows walk forward until `days` or the end of the grid.
+// actual = -1 marks "no sync data"; carryDays > 0 adds the shortfall of the
+// previous carryDays days to today's `left`. Returns plan.n (0 if today is
+// outside the grid, so the caller can show its empty state).
+export function buildCommitPlan(grid, cellKey, cellLabel, todayIdx, days, max, low, high, actualMap, carryDays, plan) {
+	plan.n = 0;
+	plan.total = 0;
+	plan.dueDays = 0;
+	plan.shortfall = 0;
+	if (todayIdx < 0) return 0;
+	if (actualMap && carryDays > 0) {
+		plan.shortfall = shortfallOf(grid, cellKey, actualMap, todayIdx - carryDays, todayIdx - 1, max, low, high);
+	}
+	const end = Math.min(todayIdx + days, N, todayIdx + plan.rows.length);
+	let n = 0;
+	for (let idx = todayIdx; idx < end; idx++, n++) {
+		const r = plan.rows[n];
+		const level = grid[idx];
+		const target = commitsForLevel(level, max, low, high);
+		const actual = actualMap ? (actualMap.get(cellKey[idx]) || 0) : -1;
+		const done = actual > 0 ? actual : 0;
+		r.key = cellKey[idx];
+		r.label = cellLabel[idx];
+		r.level = level;
+		r.target = target;
+		r.actual = actual;
+		r.left = (target > done ? target - done : 0) + (n === 0 ? plan.shortfall : 0);
+		r.today = n === 0 ? 1 : 0;
+		plan.total += target;
+		if (target > 0) plan.dueDays++;
+	}
+	plan.n = n;
+	return n;
+}
+
 // ---------------------------------------------------------------- storage
 
 function b64Encode(bytes) {
@@ -348,6 +403,16 @@ export function textWidth57(str) {
 
 export function textWidth35(str) {
 	return str.length ? str.length * 4 - 1 : 0; // advance 3 + 1, no trailing space
+}
+
+// Largest pixel font that renders `text` inside the grid width, or null when
+// even 3x5 overflows (caller reports the needed width instead of clipping).
+export function pickPixelFont(text) {
+	const s = (text || '').trim();
+	if (!s) return null;
+	if (textWidth57(s) <= W) return '57';
+	if (textWidth35(s) <= W) return '35';
+	return null;
 }
 
 // Writes text into grid (mutates), centered horizontally, at `level`.

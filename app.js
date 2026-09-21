@@ -29,6 +29,10 @@ const ghTokenEl = $('ghToken');
 const btnFetch = $('btnFetch');
 const fileImport = $('fileImport');
 const btnPng = $('btnPng');
+const planEl = $('plan');
+const planSummaryEl = $('planSummary');
+const planDaysEl = $('planDays');
+const planCarryEl = $('planCarry');
 
 // ---- canvas geometry (logical px; backing store scaled by DPR)
 const LABEL_W = 30;
@@ -84,6 +88,17 @@ let trackHoverX = -1;
 const undoStack = [];
 const todayMs = C.localTodayMs();
 
+// commit plan: rows are preallocated (max 30 days) and mutated in place; the
+// chips are DOM nodes built once per row-count change and then only rewritten.
+const CARRY_DAYS = 7;
+const PLAN_MAX_DAYS = 30;
+let planDays = 14;
+const plan = { rows: [], n: 0, total: 0, dueDays: 0, shortfall: 0 };
+for (let i = 0; i < PLAN_MAX_DAYS; i++) {
+	plan.rows.push({ key: '', label: '', level: 0, target: 0, actual: -1, left: 0, today: 0 });
+}
+const planChips = [];
+
 // per-offset precomputed buffers (rebuilt on offset change only)
 const cellKey = new Array(C.N);
 const cellLabel = new Array(C.N);
@@ -132,6 +147,7 @@ function refreshColors() {
 	colorCache = C.buildColorCache(maxLvl, displayMode);
 	refreshLegend();
 	refreshSuggestion();
+	refreshPlan();
 }
 
 // grid (or offset via caller) changed
@@ -150,6 +166,7 @@ function setOffset(v, opts) {
 	offsetValEl.textContent = (offset > 0 ? '+' : '') + offset;
 	recomputeDates();
 	refreshSuggestion();
+	refreshPlan();
 	scheduleRender();
 	scheduleTrackRender();
 	saveSoon();
@@ -432,6 +449,72 @@ function onWheel(e) {
 canvas.addEventListener('wheel', onWheel, { passive: false });
 track.addEventListener('wheel', onWheel, { passive: false });
 
+// ---- commit plan panel
+function ensurePlanChips(n) {
+	if (planChips.length === n) return;
+	for (const chip of planChips) chip.el.remove();
+	planChips.length = 0;
+	for (let i = 0; i < n; i++) {
+		const el = document.createElement('div');
+		el.className = 'pd';
+		const date = document.createElement('b');
+		const lvl = document.createElement('span');
+		lvl.className = 'lvl';
+		const st = document.createElement('span');
+		st.className = 'st';
+		el.appendChild(date);
+		el.appendChild(lvl);
+		el.appendChild(st);
+		planEl.appendChild(el);
+		planChips.push({ el: el, date: date, lvl: lvl, st: st, key: '' });
+	}
+}
+
+function planStatusText(r) {
+	if (r.target === 0) return r.actual > 0 ? 'rest · ' + r.actual + ' done' : 'rest';
+	if (r.actual < 0) return 'planned';
+	if (r.left === 0) return 'done ✓';
+	if (r.actual > 0) return r.actual + ' done · ' + r.left + ' left';
+	return r.left + ' left';
+}
+
+function updatePlanChip(chip, r) {
+	if (chip.key !== r.key) {
+		chip.key = r.key;
+		chip.el.setAttribute('data-key', r.key);
+		chip.date.textContent = (r.today ? 'today · ' : '') + r.label.slice(0, 10);
+	}
+	chip.lvl.textContent = 'L' + r.level + ' · ' + r.target + (r.target === 1 ? ' commit' : ' commits');
+	chip.st.textContent = planStatusText(r);
+	const met = r.actual >= 0 && r.target > 0 && r.left === 0;
+	chip.el.className = 'pd'
+		+ (r.today ? ' today' : '')
+		+ (met ? ' met' : '')
+		+ (r.target === 0 ? ' rest' : r.today && r.left > 0 ? ' due' : '');
+	chip.el.title = 'plan ' + r.target + ' commits'
+		+ (r.today && plan.shortfall ? ' + ' + plan.shortfall + ' carried from the last ' + CARRY_DAYS + ' days' : '');
+}
+
+function refreshPlan() {
+	const n = C.buildCommitPlan(grid, cellKey, cellLabel, todayIdx, planDays, maxLvl, low, high,
+		actual, planCarryEl.checked ? CARRY_DAYS : 0, plan);
+	ensurePlanChips(n);
+	for (let i = 0; i < n; i++) updatePlanChip(planChips[i], plan.rows[i]);
+	if (!n) {
+		planSummaryEl.textContent = 'today is outside the grid — move the offset so today is visible.';
+		return;
+	}
+	planSummaryEl.textContent = plan.n + (plan.n === 1 ? ' day · ' : ' days · ')
+		+ (plan.total ? plan.total + ' commits on ' + plan.dueDays + (plan.dueDays === 1 ? ' day' : ' days') : 'nothing planned')
+		+ (plan.shortfall > 0 ? ' · behind ' + plan.shortfall + ' over the last ' + CARRY_DAYS + ' days' : '');
+}
+
+planDaysEl.addEventListener('change', () => {
+	planDays = C.clampInt(parseInt(planDaysEl.value, 10), 1, PLAN_MAX_DAYS);
+	refreshPlan();
+});
+planCarryEl.addEventListener('change', refreshPlan);
+
 // ---- pointer (plot)
 function pickCell(e) {
 	const rect = canvas.getBoundingClientRect();
@@ -540,16 +623,23 @@ function renderText() {
 		status('type some text first');
 		return;
 	}
+	const auto = textFontEl.value === 'auto';
+	const font = auto ? C.pickPixelFont(text) : textFontEl.value;
+	if (!font) {
+		status('text too wide: "' + text.trim() + '" needs ' + C.textWidth35(text.trim())
+			+ ' columns in 3x5, the grid has ' + C.W + ' — shorten it');
+		return;
+	}
 	pushUndo();
-	if (textFontEl.value === 'smooth') {
+	if (font === 'smooth') {
 		smoothText(text);
 	} else {
 		const lvl = Math.max(maxLvl, 1);
 		if (textReplaceEl.checked) grid.fill(0);
-		C.renderTextPixel(grid, text, textFontEl.value, lvl);
+		C.renderTextPixel(grid, text, font, lvl);
 	}
 	markDirty();
-	status('rendered text');
+	status('rendered text' + (auto && font !== 'smooth' ? ' (' + (font === '57' ? '5x7' : '3x5') + ' auto)' : ''));
 }
 
 // antialiased: 4x offscreen bold text, per-cell average alpha -> level
@@ -955,6 +1045,7 @@ async function doFetch() {
 		actual = res.map;
 		cacheActual(user, res.map);
 		refreshSuggestion();
+		refreshPlan();
 		scheduleRender();
 		status('synced @' + user + ' · ' + res.map.size + ' days with commits · ' + res.note);
 	} catch (err) {

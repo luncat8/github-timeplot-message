@@ -22,3 +22,19 @@ auto save, load at start localstorage. import, export. Use compact efficient sav
 
 ## if text add option subpixel smooth font - to not only use low and high commit numbers but also some other for grayslake antialiasing
 
+##
+num input low high commits mapped to level 1 … max 
+ duplicate functionality of draw amount slider. better make 2 sliders: for low/erase and high/draw
+
+##
+reorder gui according to workflow:
+1 fetch ...
+2 tools ...
+3 text input ...
+4 plot 
+5 plot info
+6 ...
+
+##
+after fetch recalculate low and high according to average commits, so it is typically like recommended low 5, high 10, today high so 10 or 0 if antialiasing or graciles image
+

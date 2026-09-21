@@ -74,6 +74,33 @@
   the past). Matches GitHub's own contribution graph time direction and the
   expected "scroll down = older" convention.
 
+## commit plan / carry
+
+- A plan window that starts at today must not try to also cover the past: rows are
+  "today + n". Yesterday still matters, but only as an input (the shortfall), never
+  as a row — otherwise the totals mix what is done with what is planned.
+- "Day missing from the actual-commits map" is ambiguous: absent can mean 0 commits
+  or "not fetched". It is safe to read it as 0 only because every provider covers the
+  whole grid range; with the events fallback (recent months only) the carry is an
+  over-estimate, which is why the UI labels that provider "approx".
+- Carry only today: adding the shortfall to future days would quietly inflate the
+  plan. Keep `left = target - actual` for every other day.
+- Rebuilding the plan as chips: create the DOM nodes once per row-count change
+  (`ensurePlanChips(n)`) and afterwards only write `textContent` / `className`. The
+  panel follows every painted cell, so `innerHTML = ''` per stroke is wasteful.
+  Chips keyed by date also let the date line be skipped when only the level changed.
+- Status text must distinguish three states, not two: no data (`planned`), known and
+  met (`done ✓`), known and short (`N left`). Collapsing "no data" into "0 commits
+  done" makes an unsynced app look like it is permanently behind.
+
+## auto font fit
+
+- Deciding which bitmap font fits is pure width table lookup
+  (`textWidth57 <= 53 ? '57' : textWidth35 <= 53 ? '35' : null`). Do not measure by
+  rendering: the advance is fixed (5+1 / 3+1) minus the trailing gap.
+- When nothing fits, report the needed column count and leave the grid untouched —
+  silently clipping a 20-char string looks like a rendering bug.
+
 ## PNG export
 
 - The drawing routine must take a `ctx` parameter (not be hard-coded to the

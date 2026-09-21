@@ -146,6 +146,26 @@
 		z-index: 5;
 	}
 	.suggest { flex-basis: 100%; font-size: 13px; }
+	#plan { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+	.pd {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 112px;
+		padding: 4px 8px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: #fff;
+		font-size: 12px;
+	}
+	.pd b { font-weight: 600; }
+	.pd .lvl { color: var(--fg); }
+	.pd .st { color: var(--muted); }
+	.pd.today { border-color: var(--green); box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.16); }
+	.pd.due .st { color: #9a6700; font-weight: 600; }
+	.pd.met .st { color: var(--green); font-weight: 600; }
+	.pd.rest { opacity: 0.6; }
+	#planSummary { flex: 1; text-align: right; }
 	.muted { color: var(--muted); font-size: 12px; }
 	#legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 12px; color: var(--muted); }
 	.sw {
@@ -194,6 +214,7 @@
 			<input id="text" type="text" maxlength="40" placeholder="HI" spellcheck="false" style="flex:1;min-width:140px">
 		</label>
 		<select id="textFont" title="text render style">
+			<option value="auto">pixel auto</option>
 			<option value="57">pixel 5x7</option>
 			<option value="35">pixel 3x5</option>
 			<option value="smooth">smooth</option>
@@ -237,6 +258,22 @@
 		</label>
 		<span class="muted">commits mapped to level 1 … max</span>
 		<div id="suggest" class="suggest"></div>
+	</section>
+
+	<section class="row">
+		<span class="muted">commit plan</span>
+		<label>days
+			<select id="planDays">
+				<option value="7">7</option>
+				<option value="14" selected>14</option>
+				<option value="30">30</option>
+			</select>
+		</label>
+		<label title="adds the commits you missed in the last 7 days to today's target">
+			<input type="checkbox" id="planCarry" checked> carry shortfall
+		</label>
+		<span id="planSummary" class="muted"></span>
+		<div id="plan"></div>
 	</section>
 
 	<footer>

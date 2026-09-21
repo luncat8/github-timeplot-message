@@ -16,6 +16,9 @@ message/picture you painted.
 - PNG export of the rendered grid (`timeplot-<startISO>-<endISO>.png`, 2x)
 - GitHub sync (optional PAT): contribution overlay dots + "today you need ~N commits"
   with yesterday planned-vs-actual
+- commit plan panel: next 7 / 14 / 30 days starting today — planned level, required
+  commits, done vs left once synced; "carry shortfall" adds the unmet commits of the
+  last 7 days to today's number
 - keyboard: 1-9/0 amount, D/E/R tools, F fill, C clear, Ctrl+Z undo
 
 ### run
