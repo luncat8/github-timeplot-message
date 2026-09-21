@@ -1,0 +1,24 @@
+
+same style plot as on github
+
+input line for text or draw rectangles with pointer
+
+slider to move date related to image. horizontally, by set week.
+
+buttons fill, clear
+draw tools: draw, erase
+
+slider to adjust draw amount.
+
+amount is relative and draw color related to max amount.
+example: 
+0,1  -> 0, 255
+0,2,3 -> 0, 255/4*3, 255
+note typically it is green on white bg similar to github theme.
+
+auto save, load at start localstorage. import, export. Use compact efficient save format 
+
+## get user commits to sync with image plan and suggest todays commit number related to yesterday (high and low levels to print image).
+
+## if text add option subpixel smooth font - to not only use low and high commit numbers but also some other for grayslake antialiasing
+
