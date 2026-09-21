@@ -20,10 +20,11 @@ const ctx2d = new Proxy({}, {
 
 const LOGICAL_W = 30 + C.W * 19;
 const LOGICAL_H = 18 + C.H * 19;
+const TRACK_H = 40;
 
 function makeEl(id) {
 	const listeners = {};
-	return {
+	const el = {
 		id,
 		style: {},
 		value: '',
@@ -39,22 +40,29 @@ function makeEl(id) {
 		fire(type, ev) { (listeners[type] || []).forEach(fn => fn(ev || {})); },
 		click() { this.fire('click', {}); },
 		getBoundingClientRect() {
-			return id === 'plot'
-				? { left: 0, top: 0, width: LOGICAL_W, height: LOGICAL_H }
-				: { left: 0, top: 0, width: 100, height: 100 };
+			if (id === 'plot') return { left: 0, top: 0, width: LOGICAL_W, height: LOGICAL_H };
+			if (id === 'track') return { left: 0, top: LOGICAL_H + 4, width: LOGICAL_W, height: TRACK_H };
+			if (id === 'trackWrap') return { left: 0, top: LOGICAL_H + 4, width: LOGICAL_W, height: TRACK_H };
+			if (id === 'plotWrap') return { left: 0, top: 0, width: LOGICAL_W + 20, height: LOGICAL_H + TRACK_H + 20 };
+			return { left: 0, top: 0, width: 100, height: 100 };
 		},
 	};
+	if (id === 'created-canvas') el.getContext = () => ctx2d;
+	return el;
 }
 
 const IDS = ['plot', 'plotWrap', 'tip', 'range', 'suggest', 'legend', 'status',
-	'text', 'textFont', 'textReplace', 'amount', 'amountVal', 'offset', 'offsetVal',
+	'text', 'textFont', 'textReplace', 'amount', 'amountVal', 'offsetVal',
+	'track', 'trackWrap', 'trackLabel',
 	'low', 'high', 'display', 'ghUser', 'ghToken', 'btnFetch', 'fileImport',
-	'btnExport', 'btnImport', 'btnPaste', 'toolDraw', 'toolErase', 'toolRect',
+	'btnExport', 'btnPng', 'btnImport', 'btnPaste', 'toolDraw', 'toolErase', 'toolRect',
 	'btnFill', 'btnClear', 'btnUndo', 'btnRender'];
 const els = {};
 for (const id of IDS) els[id] = makeEl(id);
 els.plot.getContext = () => ctx2d;
 els.plot.setPointerCapture = () => {};
+els.track.getContext = () => ctx2d;
+els.track.setPointerCapture = () => {};
 
 const store = {};
 globalThis.document = {
@@ -84,9 +92,12 @@ await import('../app.js');
 await sleep(50); // let the rAF draw flush
 
 ok(els.plot.width === LOGICAL_W, 'canvas backing width set (dpr=1)');
+ok(els.track.width === LOGICAL_W, 'track canvas backing width set');
+ok(els.track.height === TRACK_H, 'track canvas backing height set');
 ok(els.status.textContent.includes('ready'), 'init status set');
 ok(els.legend.innerHTML.includes('empty'), 'empty-grid legend hint');
 ok(/^\d{4}-\d{2}-\d{2}  →  \d{4}-\d{2}-\d{2}$/.test(els.range.textContent), 'date range label: ' + els.range.textContent);
+ok(els.offsetVal.textContent === '0', 'offset readout shows 0 at start');
 
 // today (2026-09-21 Monday) must be highlighted window: offset 0 ends Sat 2026-09-26
 ok(els.range.textContent.endsWith('2026-09-26'), 'range ends this Saturday: ' + els.range.textContent);
@@ -126,20 +137,41 @@ for (let i = 0; i < C.N; i++) {
 ok(lit === 28, 'rendered "HI" = 28 lit cells, got ' + lit);
 ok(allLvl3, 'text painted at level 3 (current max)');
 
-// offset slider into future: +5 w -> range ends 2026-10-31; today still inside grid
-els.offset.value = '5';
-els.offset.fire('input');
-ok(els.range.textContent.endsWith('2026-10-31'), 'offset +5 ends 2026-10-31: ' + els.range.textContent);
+// track slider drag into future: x = midpoint (offset 0) + half usable -> offset ~ +26
+const TRACK_INSET = 30;
+const TRACK_USABLE = LOGICAL_W - TRACK_INSET;
+function trackXForOffset(o) {
+	return TRACK_INSET + (o + 52) / 104 * TRACK_USABLE;
+}
+function offsetForTrackX(x) {
+	return Math.round(-52 + (x - TRACK_INSET) / TRACK_USABLE * 104);
+}
+
+const xPlus5 = trackXForOffset(5);
+els.track.fire('pointerdown', { clientX: xPlus5, clientY: TRACK_H / 2, pointerId: 2, preventDefault() {} });
+els.track.fire('pointerup', { pointerId: 2 });
+await sleep(400);
+ok(els.range.textContent.endsWith('2026-10-31'), 'track click offset +5 ends 2026-10-31: ' + els.range.textContent);
 ok(els.suggest.innerHTML.includes('Today'), 'offset +5: today still inside grid (earlier column)');
+ok(els.offsetVal.textContent === '+5', 'offset readout shows +5');
 
-// offset into the past: -1 w -> grid ends before today -> "outside" message
-els.offset.value = '-1';
-els.offset.fire('input');
-ok(els.suggest.innerHTML.includes('outside'), 'offset -1: suggestion notes today outside grid');
+// wheel scrub on the plot: positive deltaY -> offset decreases (move into the past)
+els.plot.fire('wheel', { deltaY: 19, preventDefault() {}, cancelable: true });
+ok(parseInt(els.offsetVal.textContent, 10) === 4, 'wheel +19 (1 week back) brought offset +5 to +4: ' + els.offsetVal.textContent);
+els.plot.fire('wheel', { deltaY: 19 * 8, preventDefault() {}, cancelable: true });
+await sleep(50);
+ok(parseInt(els.offsetVal.textContent, 10) === -4, 'wheel +19*8 brought +4 to -4: ' + els.offsetVal.textContent);
+els.plot.fire('wheel', { deltaY: -19, preventDefault() {}, cancelable: true }); // back 1 week into the future
+await sleep(50);
+ok(parseInt(els.offsetVal.textContent, 10) === -3, 'wheel -19 brought -4 to -3: ' + els.offsetVal.textContent);
 
-// back to 0
-els.offset.value = '0';
-els.offset.fire('input');
+// back to 0 via direct API (no slider anymore)
+import('../app.js').catch(() => {}); // no-op: ensure module stays loaded
+// use the keyboard shortcut path on the track
+els.track.focus = () => {};
+els.track.fire('keydown', { key: 'Home', preventDefault() {} });
+await sleep(50);
+ok(parseInt(els.offsetVal.textContent, 10) === 0, 'track Home resets offset to 0: ' + els.offsetVal.textContent);
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion back to Today');
 
 // paste import of a known payload
@@ -151,11 +183,27 @@ await sleep(400); // autosave debounce
 const saved3 = C.parseGrid(store['gtm-v1']);
 ok(saved3.off === -3, 'paste import offset -3');
 ok(saved3.grid.every((v, i) => v === g[i]), 'paste import grid equal');
-ok(els.offset.value === '-3', 'offset slider synced after import');
+ok(els.offsetVal.textContent === '-3', 'offset readout synced after import');
 
 // export downloads (a.click no-ops) and reports status
 els.btnExport.click();
 ok(els.status.textContent.includes('exported'), 'export status: ' + els.status.textContent);
+
+// PNG export: data URL should be triggered; the shim's anchor.click is a no-op
+// but the status line should mention the file name
+// patch the created-canvas toDataURL for the test
+const origCreate = globalThis.document.createElement;
+globalThis.document.createElement = tag => {
+	const el = origCreate(tag);
+	if (tag === 'canvas') {
+		el.getContext = () => ctx2d;
+		el.toDataURL = () => 'data:image/png;base64,AAAA';
+	}
+	return el;
+};
+els.btnPng.click();
+ok(els.status.textContent.includes('timeplot-'), 'PNG export status: ' + els.status.textContent);
+globalThis.document.createElement = origCreate;
 
 // clear -> confirm true -> grid zero
 els.btnClear.click();

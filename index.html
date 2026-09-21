@@ -98,10 +98,41 @@
 		display: block;
 		width: 100%;
 		max-width: 1037px;
-		height: auto;
 		touch-action: none;
+	}
+	#plot {
+		height: auto;
 		cursor: crosshair;
 	}
+	#track {
+		height: 40px;
+		margin-top: 4px;
+		cursor: ew-resize;
+	}
+	#trackWrap {
+		position: relative;
+		max-width: 1037px;
+	}
+	#trackLabel {
+		position: absolute;
+		pointer-events: none;
+		background: #1f2328;
+		color: #fff;
+		font-size: 12px;
+		padding: 3px 7px;
+		border-radius: 5px;
+		white-space: nowrap;
+		transform: translate(-50%, -100%);
+		z-index: 4;
+	}
+	#offsetReadout {
+		display: inline-flex;
+		gap: 6px;
+		align-items: baseline;
+		color: var(--muted);
+		font-size: 12px;
+	}
+	#offsetReadout b { color: var(--fg); font-size: 14px; font-weight: 600; min-width: 2.4em; text-align: right; }
 	#tip {
 		position: absolute;
 		pointer-events: none;
@@ -142,6 +173,7 @@
 			</label>
 			<button id="btnFetch" title="fetch contributions for overlay + suggestions">fetch</button>
 			<button id="btnExport" title="copy GTM1 string + download .gtm">export</button>
+			<button id="btnPng" title="download rendered grid as PNG">PNG</button>
 			<button id="btnImport" title="import from .gtm/.txt/.json file">import</button>
 			<button id="btnPaste" title="paste a GTM1 string">paste</button>
 			<input type="file" id="fileImport" accept=".gtm,.txt,.json,text/plain,application/json" hidden>
@@ -150,6 +182,10 @@
 
 	<div id="plotWrap">
 		<canvas id="plot"></canvas>
+		<div id="trackWrap">
+			<canvas id="track" tabindex="0" aria-label="week offset"></canvas>
+			<div id="trackLabel" hidden></div>
+		</div>
 		<div id="tip" hidden></div>
 	</div>
 
@@ -188,10 +224,7 @@
 	</section>
 
 	<section class="row">
-		<label class="grow">offset
-			<input id="offset" type="range" min="-52" max="52" step="1" value="0">
-			<b id="offsetVal">0</b> w
-		</label>
+		<span id="offsetReadout">offset <b id="offsetVal">0</b> w</span>
 		<span id="range" class="muted"></span>
 	</section>
 

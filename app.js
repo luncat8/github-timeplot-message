@@ -7,6 +7,10 @@ const canvas = $('plot');
 const ctx = canvas.getContext('2d');
 const plotWrap = $('plotWrap');
 const tip = $('tip');
+const track = $('track');
+const trackCtx = track.getContext('2d');
+const trackWrap = $('trackWrap');
+const trackLabel = $('trackLabel');
 const rangeEl = $('range');
 const suggestEl = $('suggest');
 const legendEl = $('legend');
@@ -16,7 +20,6 @@ const textFontEl = $('textFont');
 const textReplaceEl = $('textReplace');
 const amountEl = $('amount');
 const amountValEl = $('amountVal');
-const offsetEl = $('offset');
 const offsetValEl = $('offsetVal');
 const lowEl = $('low');
 const highEl = $('high');
@@ -25,6 +28,7 @@ const ghUserEl = $('ghUser');
 const ghTokenEl = $('ghToken');
 const btnFetch = $('btnFetch');
 const fileImport = $('fileImport');
+const btnPng = $('btnPng');
 
 // ---- canvas geometry (logical px; backing store scaled by DPR)
 const LABEL_W = 30;
@@ -36,10 +40,25 @@ const LOGICAL_W = LABEL_W + C.W * PITCH;
 const LOGICAL_H = LABEL_H + C.H * PITCH;
 const INSET = GAP / 2;
 
+// track slider geometry (aligned to plot columns)
+const TRACK_H = 40;
+const TRACK_INSET = LABEL_W;
+const TRACK_USABLE = LOGICAL_W - TRACK_INSET; // = C.W * PITCH
+const OFFSET_MIN = -52;
+const OFFSET_MAX = 52;
+const TRACK_BAR_Y = 18;
+const TRACK_BAR_H = 6;
+const TRACK_THUMB_W = 12;
+const TRACK_THUMB_H = 22;
+
 const EMPTY_COLOR = 'rgb(235,237,240)';
 const FUTURE_COLOR = 'rgba(209,213,219,0.4)';
 const DOT_COLOR = 'rgb(212,167,44)';
 const LABEL_COLOR = '#57606a';
+const TRACK_BAR_COLOR = '#d0d7de';
+const TRACK_FILL_COLOR = '#216e39';
+const TRACK_THUMB_COLOR = '#1f2328';
+const TRACK_TODAY_COLOR = '#57606a';
 
 // ---- state
 const grid = new Uint8Array(C.N);
@@ -58,6 +77,10 @@ let dragB = -1;
 let lastPaint = -1;
 let saveTimer = 0;
 let renderQueued = false;
+let trackRenderQueued = false;
+let trackDragging = false;
+let trackHover = false;
+let trackHoverX = -1;
 const undoStack = [];
 const todayMs = C.localTodayMs();
 
@@ -80,6 +103,15 @@ function scheduleRender() {
 	requestAnimationFrame(() => {
 		renderQueued = false;
 		draw();
+	});
+}
+
+function scheduleTrackRender() {
+	if (trackRenderQueued) return;
+	trackRenderQueued = true;
+	requestAnimationFrame(() => {
+		trackRenderQueued = false;
+		drawTrack();
 	});
 }
 
@@ -106,6 +138,20 @@ function refreshColors() {
 function markDirty() {
 	refreshColors();
 	scheduleRender();
+	scheduleTrackRender();
+	saveSoon();
+}
+
+// ---- offset (single source of truth)
+function setOffset(v, opts) {
+	const o = C.clampInt(v | 0, OFFSET_MIN, OFFSET_MAX);
+	if (o === offset && !(opts && opts.force)) return;
+	offset = o;
+	offsetValEl.textContent = (offset > 0 ? '+' : '') + offset;
+	recomputeDates();
+	refreshSuggestion();
+	scheduleRender();
+	scheduleTrackRender();
 	saveSoon();
 }
 
@@ -123,13 +169,11 @@ function doUndo() {
 	}
 	grid.set(s.grid);
 	if (s.off !== offset) {
-		offset = s.off;
-		offsetEl.value = String(offset);
-		offsetValEl.textContent = String(offset);
-		recomputeDates();
+		setOffset(s.off);
 	}
 	refreshColors();
 	scheduleRender();
+	scheduleTrackRender();
 	saveSoon();
 }
 
@@ -200,7 +244,195 @@ function draw() {
 	}
 }
 
-// ---- pointer
+// ---- track slider
+function offsetToX(o) {
+	return TRACK_INSET + (o - OFFSET_MIN) / (OFFSET_MAX - OFFSET_MIN) * TRACK_USABLE;
+}
+
+function xToOffset(x) {
+	const u = (x - TRACK_INSET) / TRACK_USABLE;
+	return Math.round(OFFSET_MIN + u * (OFFSET_MAX - OFFSET_MIN));
+}
+
+function drawTrack() {
+	trackCtx.clearRect(0, 0, LOGICAL_W, TRACK_H);
+
+	// background bar
+	trackCtx.fillStyle = TRACK_BAR_COLOR;
+	trackCtx.fillRect(TRACK_INSET, TRACK_BAR_Y, TRACK_USABLE, TRACK_BAR_H);
+
+	// filled portion (the range currently covered by the grid, relative to today)
+	const todayX = offsetToX(0);
+	const thumbX = offsetToX(offset);
+	trackCtx.fillStyle = TRACK_FILL_COLOR;
+	if (offset >= 0) {
+		trackCtx.fillRect(todayX, TRACK_BAR_Y, thumbX - todayX, TRACK_BAR_H);
+	} else {
+		trackCtx.fillRect(thumbX, TRACK_BAR_Y, todayX - thumbX, TRACK_BAR_H);
+	}
+
+	// quarter-year tick marks
+	trackCtx.strokeStyle = '#8b949e';
+	trackCtx.lineWidth = 1;
+	for (let o = -52; o <= 52; o += 13) {
+		const x = offsetToX(o);
+		trackCtx.beginPath();
+		trackCtx.moveTo(x + 0.5, TRACK_BAR_Y + TRACK_BAR_H + 1);
+		trackCtx.lineTo(x + 0.5, TRACK_BAR_Y + TRACK_BAR_H + 4);
+		trackCtx.stroke();
+	}
+
+	// end labels (-52w / +52w)
+	trackCtx.fillStyle = TRACK_TODAY_COLOR;
+	trackCtx.font = '10px system-ui, sans-serif';
+	trackCtx.textBaseline = 'top';
+	trackCtx.textAlign = 'left';
+	trackCtx.fillText('-52w', TRACK_INSET, TRACK_BAR_Y + TRACK_BAR_H + 5);
+	trackCtx.textAlign = 'right';
+	trackCtx.fillText('+52w', TRACK_INSET + TRACK_USABLE, TRACK_BAR_Y + TRACK_BAR_H + 5);
+
+	// today marker at offset 0
+	trackCtx.strokeStyle = TRACK_TODAY_COLOR;
+	trackCtx.lineWidth = 1.5;
+	trackCtx.beginPath();
+	trackCtx.moveTo(todayX + 0.5, TRACK_BAR_Y - 4);
+	trackCtx.lineTo(todayX + 0.5, TRACK_BAR_Y + TRACK_BAR_H + 4);
+	trackCtx.stroke();
+	trackCtx.fillStyle = TRACK_TODAY_COLOR;
+	trackCtx.textAlign = 'center';
+	trackCtx.fillText('today', todayX, 4);
+
+	// hover guide line
+	if ((trackHover || trackDragging) && trackHoverX >= 0) {
+		trackCtx.strokeStyle = 'rgba(31,35,40,0.5)';
+		trackCtx.lineWidth = 1;
+		trackCtx.setLineDash([2, 2]);
+		trackCtx.beginPath();
+		trackCtx.moveTo(trackHoverX + 0.5, TRACK_BAR_Y - 6);
+		trackCtx.lineTo(trackHoverX + 0.5, TRACK_BAR_Y + TRACK_BAR_H + 6);
+		trackCtx.stroke();
+		trackCtx.setLineDash([]);
+	}
+
+	// thumb
+	const ty = TRACK_BAR_Y + TRACK_BAR_H / 2 - TRACK_THUMB_H / 2;
+	trackCtx.fillStyle = TRACK_THUMB_COLOR;
+	roundRect(trackCtx, thumbX - TRACK_THUMB_W / 2, ty, TRACK_THUMB_W, TRACK_THUMB_H, 3);
+	trackCtx.fill();
+	trackCtx.fillStyle = '#fff';
+	trackCtx.fillRect(thumbX - 1, ty + 5, 2, TRACK_THUMB_H - 10);
+}
+
+function roundRect(c, x, y, w, h, r) {
+	c.beginPath();
+	c.moveTo(x + r, y);
+	c.lineTo(x + w - r, y);
+	c.quadraticCurveTo(x + w, y, x + w, y + r);
+	c.lineTo(x + w, y + h - r);
+	c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+	c.lineTo(x + r, y + h);
+	c.quadraticCurveTo(x, y + h, x, y + h - r);
+	c.lineTo(x, y + r);
+	c.quadraticCurveTo(x, y, x + r, y);
+	c.closePath();
+}
+
+function setupTrackCanvas() {
+	const dpr = window.devicePixelRatio || 1;
+	track.width = LOGICAL_W * dpr;
+	track.height = TRACK_H * dpr;
+	trackCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function trackXFromEvent(e) {
+	const rect = track.getBoundingClientRect();
+	return (e.clientX - rect.left) * LOGICAL_W / rect.width;
+}
+
+function showTrackLabel(x) {
+	const o = xToOffset(x);
+	const start = C.dateKeyOf(C.gridStartMs(todayMs, o));
+	const end = C.dateKeyOf(C.gridStartMs(todayMs, o) + 370 * C.DAY);
+	trackLabel.textContent = (o > 0 ? '+' : '') + o + 'w · ' + start + ' → ' + end;
+	const wrap = plotWrap.getBoundingClientRect();
+	const rect = track.getBoundingClientRect();
+	const scale = rect.width / LOGICAL_W;
+	trackLabel.style.left = (rect.left - wrap.left + x * scale) + 'px';
+	trackLabel.style.top = (rect.top - wrap.top - 2) + 'px';
+	trackLabel.hidden = false;
+}
+
+function hideTrackLabel() {
+	trackLabel.hidden = true;
+}
+
+track.addEventListener('pointerdown', e => {
+	e.preventDefault();
+	const x = trackXFromEvent(e);
+	track.setPointerCapture(e.pointerId);
+	trackDragging = true;
+	trackHoverX = x;
+	setOffset(xToOffset(x));
+	showTrackLabel(x);
+	scheduleTrackRender();
+});
+
+track.addEventListener('pointermove', e => {
+	const x = trackXFromEvent(e);
+	trackHoverX = x;
+	trackHover = true;
+	if (trackDragging) {
+		setOffset(xToOffset(x));
+	}
+	showTrackLabel(x);
+	scheduleTrackRender();
+});
+
+function endTrackDrag() {
+	if (!trackDragging) return;
+	trackDragging = false;
+	scheduleTrackRender();
+}
+
+track.addEventListener('pointerup', endTrackDrag);
+track.addEventListener('pointercancel', endTrackDrag);
+track.addEventListener('pointerleave', () => {
+	trackHover = false;
+	if (!trackDragging) hideTrackLabel();
+	scheduleTrackRender();
+});
+
+track.addEventListener('keydown', e => {
+	const k = e.key;
+	let o = offset;
+	if (k === 'ArrowLeft') o -= e.shiftKey ? 4 : 1;
+	else if (k === 'ArrowRight') o += e.shiftKey ? 4 : 1;
+	else if (k === 'PageDown') o -= 13;
+	else if (k === 'PageUp') o += 13;
+	else if (k === 'Home') o = 0;
+	else if (k === 'End') o = e.shiftKey ? OFFSET_MIN : OFFSET_MAX;
+	else return;
+	e.preventDefault();
+	setOffset(o);
+});
+
+// wheel scrubs offset: scroll down (deltaY > 0) moves into the past (offset decreases)
+let wheelAcc = 0;
+function onWheel(e) {
+	if (e.deltaY === 0) return;
+	wheelAcc += e.deltaY;
+	const step = 19; // pixels per week
+	if (Math.abs(wheelAcc) < step) return;
+	const weeks = Math.trunc(wheelAcc / step);
+	wheelAcc -= weeks * step;
+	if (weeks === 0) return;
+	e.preventDefault();
+	setOffset(offset - weeks);
+}
+canvas.addEventListener('wheel', onWheel, { passive: false });
+track.addEventListener('wheel', onWheel, { passive: false });
+
+// ---- pointer (plot)
 function pickCell(e) {
 	const rect = canvas.getBoundingClientRect();
 	const x = (e.clientX - rect.left) * LOGICAL_W / rect.width;
@@ -415,10 +647,7 @@ function applyImport(text) {
 		const p = C.parseGrid(text);
 		pushUndo();
 		grid.set(p.grid);
-		offset = p.off;
-		offsetEl.value = String(offset);
-		offsetValEl.textContent = String(offset);
-		recomputeDates();
+		setOffset(p.off);
 		markDirty();
 		status('imported');
 	} catch (err) {
@@ -428,6 +657,7 @@ function applyImport(text) {
 
 btnFetch.addEventListener('click', doFetch);
 $('btnExport').addEventListener('click', doExport);
+btnPng.addEventListener('click', doExportPng);
 $('btnImport').addEventListener('click', () => fileImport.click());
 $('btnPaste').addEventListener('click', () => {
 	const s = prompt('paste GTM1 string, JSON, or 371 numbers');
@@ -439,6 +669,63 @@ fileImport.addEventListener('change', () => {
 	f.text().then(applyImport, () => status('import failed: cannot read file'));
 	fileImport.value = '';
 });
+
+// ---- PNG export
+function renderGridToCtx(targetCtx, scale) {
+	const w = LOGICAL_W * scale;
+	const h = (LABEL_H + C.H * PITCH) * scale;
+	targetCtx.fillStyle = '#ffffff';
+	targetCtx.fillRect(0, 0, w, h);
+
+	targetCtx.fillStyle = LABEL_COLOR;
+	targetCtx.font = (11 * scale) + 'px system-ui, sans-serif';
+	targetCtx.textBaseline = 'middle';
+	for (let c = 0; c < C.W; c++) {
+		const t = monthText[c];
+		if (t) targetCtx.fillText(t, (LABEL_W + c * PITCH) * scale, (LABEL_H / 2) * scale);
+	}
+	targetCtx.fillText('Mon', 4 * scale, (LABEL_H + 1 * PITCH + CELL / 2) * scale);
+	targetCtx.fillText('Wed', 4 * scale, (LABEL_H + 3 * PITCH + CELL / 2) * scale);
+	targetCtx.fillText('Fri', 4 * scale, (LABEL_H + 5 * PITCH + CELL / 2) * scale);
+
+	const cs = CELL * scale, gs = GAP * scale, ps = PITCH * scale, is = INSET * scale;
+	const ls = LABEL_H * scale, ws = LABEL_W * scale;
+	for (let c = 0; c < C.W; c++) {
+		const x = ws + c * ps + is;
+		for (let r = 0; r < C.H; r++) {
+			const i = c * C.H + r;
+			const lvl = grid[i];
+			if (lvl) targetCtx.fillStyle = colorCache[lvl];
+			else if (isFuture[i]) targetCtx.fillStyle = FUTURE_COLOR;
+			else targetCtx.fillStyle = EMPTY_COLOR;
+			targetCtx.fillRect(x, ls + r * ps + is, cs, cs);
+		}
+	}
+}
+
+function doExportPng() {
+	const SCALE = 2;
+	const out = document.createElement('canvas');
+	out.width = LOGICAL_W * SCALE;
+	out.height = LOGICAL_H * SCALE;
+	const octx = out.getContext('2d');
+	octx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+	renderGridToCtx(octx, 1);
+	let url;
+	try {
+		url = out.toDataURL('image/png');
+	} catch (err) {
+		status('PNG export failed: ' + err.message);
+		return;
+	}
+	const start = cellKey[0];
+	const end = cellKey[C.N - 1];
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = 'timeplot-' + start + '-' + end + '.png';
+	a.click();
+	status('exported: ' + a.download);
+}
 
 // ---- tools / controls
 const toolButtons = {
@@ -486,14 +773,6 @@ displayEl.addEventListener('change', () => {
 	refreshColors();
 	scheduleRender();
 });
-offsetEl.addEventListener('input', () => {
-	offset = +offsetEl.value;
-	offsetValEl.textContent = String(offset);
-	recomputeDates();
-	refreshSuggestion();
-	scheduleRender();
-	saveSoon();
-});
 lowEl.addEventListener('change', () => {
 	low = C.clampInt(+lowEl.value, 0, 999);
 	refreshColors();
@@ -540,7 +819,7 @@ function refreshLegend() {
 function refreshSuggestion() {
 	if (todayIdx < 0) {
 		suggestEl.innerHTML = 'Today is outside the grid (offset '
-			+ (offset > 0 ? '+' : '') + offset + ' w) — shift the offset slider to plan around today.';
+			+ (offset > 0 ? '+' : '') + offset + ' w) — drag the bar below the grid to plan around today.';
 		return;
 	}
 	const lvl = grid[todayIdx];
@@ -693,10 +972,10 @@ function setupCanvas() {
 }
 
 setupCanvas();
+setupTrackCanvas();
 loadSaved();
-offsetEl.value = String(offset);
-offsetValEl.textContent = String(offset);
-recomputeDates();
+setOffset(offset, { force: true });
 refreshColors();
 scheduleRender();
+scheduleTrackRender();
 status('ready — paint with the pointer, or type text and hit render. autosaves locally.');
