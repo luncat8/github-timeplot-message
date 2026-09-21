@@ -36,5 +36,19 @@ reorder gui according to workflow:
 6 ...
 
 ##
+
 after fetch recalculate low and high according to average commits, so it is typically like recommended low 5, high 10, today high so 10 or 0 if antialiasing or graciles image
+
+##
+
+screenshot. to save time - make simulated plot (button) to fill plot with typical commits and central region with 'hello world' text with less noisy but more or less high/low recommended values
+
+current date should be at center. slider time should move in same way as plot (currently reverse)
+
+improve low/high calculation after fetch
+
+improve antialiased font
+
+deferred - add link to users who used this tool
+
 
