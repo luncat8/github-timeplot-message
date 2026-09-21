@@ -3,11 +3,214 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title></title>
+<title>github timeplot message</title>
+<style>
+	:root {
+		--bg: #ffffff;
+		--fg: #1f2328;
+		--muted: #57606a;
+		--border: #d0d7de;
+		--panel: #f6f8fa;
+		--green: #1a7f37;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+		color: var(--fg);
+		background: var(--bg);
+	}
+	#app {
+		max-width: 1100px;
+		margin: 0 auto;
+		padding: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		align-items: center;
+		justify-content: space-between;
+	}
+	h1 { font-size: 16px; margin: 0; font-weight: 600; }
+	h1 small { color: var(--muted); font-weight: 400; }
+	.hgroup { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		align-items: center;
+		background: var(--panel);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 8px 10px;
+	}
+	label {
+		display: inline-flex;
+		gap: 6px;
+		align-items: center;
+		color: var(--muted);
+		font-size: 13px;
+		white-space: nowrap;
+	}
+	input[type="text"], input[type="number"], input[type="password"] {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 3px 8px;
+		background: #fff;
+		color: var(--fg);
+		font: inherit;
+	}
+	input[type="number"] { width: 64px; }
+	input[type="range"] { vertical-align: middle; }
+	select {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 3px 6px;
+		background: #fff;
+		color: var(--fg);
+		font: inherit;
+	}
+	button {
+		border: 1px solid var(--border);
+		background: var(--panel);
+		color: var(--fg);
+		border-radius: 6px;
+		padding: 3px 12px;
+		cursor: pointer;
+		font: inherit;
+	}
+	button:hover { background: #eef1f4; }
+	button.on { background: var(--green); border-color: var(--green); color: #fff; }
+	button:disabled { opacity: 0.5; cursor: default; }
+	.grow { flex: 1; min-width: 220px; }
+	#plotWrap {
+		position: relative;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 10px;
+		background: #fff;
+	}
+	canvas {
+		display: block;
+		width: 100%;
+		max-width: 1037px;
+		height: auto;
+		touch-action: none;
+		cursor: crosshair;
+	}
+	#tip {
+		position: absolute;
+		pointer-events: none;
+		background: #1f2328;
+		color: #fff;
+		font-size: 12px;
+		padding: 4px 8px;
+		border-radius: 6px;
+		white-space: nowrap;
+		transform: translate(-50%, -100%);
+		z-index: 5;
+	}
+	.suggest { flex-basis: 100%; font-size: 13px; }
+	.muted { color: var(--muted); font-size: 12px; }
+	#legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 12px; color: var(--muted); }
+	.sw {
+		width: 13px; height: 13px;
+		border-radius: 3px;
+		display: inline-block;
+		margin-right: 4px;
+		vertical-align: -3px;
+		border: 1px solid rgba(0,0,0,.08);
+	}
+	footer { display: flex; flex-direction: column; gap: 4px; }
+	#status { min-height: 1.2em; }
+</style>
 </head>
 <body>
 <div id="app">
-  <canvas id="c"></canvas>
+	<header>
+		<h1>github timeplot message <small>paint your profile</small></h1>
+		<div class="hgroup">
+			<label>github
+				<input id="ghUser" type="text" placeholder="username" spellcheck="false" style="width:110px">
+			</label>
+			<label>
+				<input id="ghToken" type="password" placeholder="optional PAT" spellcheck="false" style="width:130px">
+			</label>
+			<button id="btnFetch" title="fetch contributions for overlay + suggestions">fetch</button>
+			<button id="btnExport" title="copy GTM1 string + download .gtm">export</button>
+			<button id="btnImport" title="import from .gtm/.txt/.json file">import</button>
+			<button id="btnPaste" title="paste a GTM1 string">paste</button>
+			<input type="file" id="fileImport" accept=".gtm,.txt,.json,text/plain,application/json" hidden>
+		</div>
+	</header>
+
+	<div id="plotWrap">
+		<canvas id="plot"></canvas>
+		<div id="tip" hidden></div>
+	</div>
+
+	<section class="row">
+		<label class="grow">text
+			<input id="text" type="text" maxlength="40" placeholder="HI" spellcheck="false" style="flex:1;min-width:140px">
+		</label>
+		<select id="textFont" title="text render style">
+			<option value="57">pixel 5x7</option>
+			<option value="35">pixel 3x5</option>
+			<option value="smooth">smooth</option>
+		</select>
+		<label title="replace = overwrite grid; unchecked = merge (max)">
+			<input type="checkbox" id="textReplace" checked> replace
+		</label>
+		<button id="btnRender">render</button>
+	</section>
+
+	<section class="row">
+		<button id="toolDraw" class="on" title="draw (D)">draw</button>
+		<button id="toolErase" title="erase (E)">erase</button>
+		<button id="toolRect" title="rectangle drag (R)">rect</button>
+		<label>amount
+			<input id="amount" type="range" min="1" max="10" step="1" value="3">
+			<b id="amountVal">3</b>
+		</label>
+		<button id="btnFill" title="fill grid with amount (F)">fill</button>
+		<button id="btnClear" title="clear grid (C)">clear</button>
+		<button id="btnUndo" title="undo (Ctrl+Z)">undo</button>
+		<label>display
+			<select id="display">
+				<option value="grad">gradient</option>
+				<option value="quant">github</option>
+			</select>
+		</label>
+	</section>
+
+	<section class="row">
+		<label class="grow">offset
+			<input id="offset" type="range" min="-52" max="52" step="1" value="0">
+			<b id="offsetVal">0</b> w
+		</label>
+		<span id="range" class="muted"></span>
+	</section>
+
+	<section class="row">
+		<label>low
+			<input id="low" type="number" min="0" max="999" value="1">
+		</label>
+		<label>high
+			<input id="high" type="number" min="0" max="999" value="10">
+		</label>
+		<span class="muted">commits mapped to level 1 … max</span>
+		<div id="suggest" class="suggest"></div>
+	</section>
+
+	<footer>
+		<div id="legend"></div>
+		<div id="status" class="muted"></div>
+	</footer>
 </div>
+<script type="module" src="./app.js"></script>
 </body>
 </html>
