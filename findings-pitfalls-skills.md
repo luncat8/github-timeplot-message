@@ -89,10 +89,13 @@
   level, low/high mapped levels to commits. Dropping amount (draw = top level,
   erase = 0) made hand-drawn pictures two-tone, which is what they were anyway;
   shades only ever came from smooth text.
-- Recommendation from the average: `low = round(mean of the last 90 days, today
-  excluded)`, `high = max(2 * low, low + 5)`. Today is excluded because it is
-  in progress and would drag the mean down. The `+5` floor matters for quiet
-  accounts where doubling `1` would give an invisible picture.
+- Recommendation from the daily counts of the last 90 days (today excluded, absent
+  = 0): `low = median day`, `high = max(p90 busy day, 2 * low, low + 5)`. The mean
+  version (`low = round(mean)`) let one 50-commit spike or a dead month drag the
+  numbers; median / p90 are exactly "typical day" and "busy day". Nearest-rank
+  quantiles (`sorted[ceil(q * n) - 1]`) on a small in-place-sorted scratch array
+  need no allocation. Keep the `2 * low` / `+5` floors: quiet accounts (median 0)
+  still need a visible picture.
 - The sliders' `input` event (not `change`) keeps the legend / plan live while
   dragging; `refreshColors` is cheap enough.
 
@@ -131,3 +134,56 @@
 - `toDataURL` works without taint since we don't load external images.
 - Don't put transient UI state (rect drag preview, hover highlights) into the
   PNG — those don't represent the saved plan.
+
+## week offset track direction
+
+- Users read the track as a viewport scrollbar for the plot, not as a time axis:
+  dragging right should shift the plot's dates right (content follows the hand),
+  which means offset increases rightward and the END LABELS are mirrored
+  (`+52w` left, `-52w` right). Mapping the thumb to the calendar instead feels
+  reversed the moment you also scroll the plot with the wheel.
+- Once the axis is spatial, the keys follow the thumb, not the calendar:
+  Home = left end = +52 (future), End = right end = -52 (past), ArrowRight = thumb
+  right = older. Wheel keeps its "scroll down = older" convention on both plot
+  and track.
+- With today always at column `52 - offset`, the default `offset = 26` centers
+  today in the 53-week grid (26 history columns left, 26 plan columns right).
+  Saved sessions restore their own offset; only fresh sessions center.
+
+## smooth text (small-bitmap antialiasing)
+
+- `getImageData` byte index is `((y * width) + x) * 4 + component`. Forgetting the
+  `* 4` on the y term (writing `(y0 + py) * gw + x0 * 4`) reads a vertically
+  squashed strip of the bitmap - the sampler then sees one glyph quarter stretched
+  over all rows. Symptom: antialiased text rows all similar, levels wrong.
+- Fit and center on the ink box, not the em box: measure
+  `actualBoundingBoxAscent/Descent` at a reference size, scale
+  `fs = target / (asc + desc) * refSize`, draw with `textBaseline = 'alphabetic'`
+  at `y = center + (asc - desc) / 2`. A hard-coded cap-height ratio (0.72) is
+  font-dependent and mis-centers lowercase and descenders.
+- Per-cell coverage mapped linearly to the level turns to mush at 7 rows (glyphs
+  3-4 cells tall, strokes 1 cell wide land on mid levels with wide halos).
+  Contrast-stretch instead: below ~0.16 coverage -> background, above ~0.62 ->
+  solid top level, linear in between. Strokes get a crisp dark core, edges stay
+  antialiased, and the `max(1, ..)` floor keeps edge cells from vanishing.
+- Merging smooth text over painted noise (`replace = false` -> `lvl > grid[i]`)
+  lets a demo keep its background: the caller decides, not the checkbox.
+
+## headless screenshots (playwright in a CDN-blocked sandbox)
+
+- `@sparticuz/chromium` (npm) bundles a chromium binary as brotli - no browser
+  download needed: `chromium.launch({ executablePath: await chromium.executablePath(),
+  args: chromium.args })` with `playwright-core`.
+- It only extracts its bundled shared libs (libnspr4 etc.) when it believes it is
+  on an AWS Lambda node runtime: set `AWS_EXECUTION_ENV=AWS_Lambda_nodejs22.x`
+  (or CODEBUILD_BUILD_IMAGE=nodejs22...) outside Lambda, or the binary dies with
+  `libnspr4.so: cannot open shared object file`.
+- Its default args include `--single-process`; opening a second page with a
+  different `deviceScaleFactor` can take the whole browser down. One DPR per
+  browser instance.
+- ES modules do not load from `file://` - serve the folder over localhost
+  (a 20-line node:http server) and remember the `/` -> `index.html` fallback;
+  a static server without it 404s the root and the page stays blank.
+- Verify screenshots by decoding pixels, not by eyeballing a preview:
+  nearest-anchor classification of cell-center samples catches "the click never
+  fired" / "empty grid" immediately.

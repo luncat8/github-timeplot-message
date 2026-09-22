@@ -66,7 +66,9 @@ const TRACK_TODAY_COLOR = '#57606a';
 
 // ---- state
 const grid = new Uint8Array(C.N);
-let offset = 0;
+// Fresh sessions center today (column = 52 - offset); saved sessions restore
+// their own offset in loadSaved().
+let offset = 26;
 let tool = 'draw';
 let displayMode = 'grad';
 let low = 0;                // commits on background (level 0) days
@@ -97,7 +99,7 @@ for (let i = 0; i < PLAN_MAX_DAYS; i++) {
 	plan.rows.push({ key: '', label: '', level: 0, target: 0, actual: -1, left: 0, today: 0 });
 }
 const planChips = [];
-const recommended = { low: 0, high: 0 };
+const recommended = { low: 0, high: 0, med: 0, p90: 0 };
 
 // per-offset precomputed buffers (rebuilt on offset change only)
 const cellKey = new Array(C.N);
@@ -287,13 +289,17 @@ function draw() {
 }
 
 // ---- track slider
+// The track mirrors the plot's motion, not the timeline: dragging the thumb
+// right shifts the plot's dates (and the today cell) right, same as scrolling
+// the plot down. So offset +52 (grid pushed into the future) sits at the left
+// end, -52 at the right end.
 function offsetToX(o) {
-	return TRACK_INSET + (o - OFFSET_MIN) / (OFFSET_MAX - OFFSET_MIN) * TRACK_USABLE;
+	return TRACK_INSET + (OFFSET_MAX - o) / (OFFSET_MAX - OFFSET_MIN) * TRACK_USABLE;
 }
 
 function xToOffset(x) {
 	const u = (x - TRACK_INSET) / TRACK_USABLE;
-	return Math.round(OFFSET_MIN + u * (OFFSET_MAX - OFFSET_MIN));
+	return Math.round(OFFSET_MAX - u * (OFFSET_MAX - OFFSET_MIN));
 }
 
 function drawTrack() {
@@ -324,14 +330,14 @@ function drawTrack() {
 		trackCtx.stroke();
 	}
 
-	// end labels (-52w / +52w)
+	// end labels (+52w on the left = grid pushed into the future, -52w right)
 	trackCtx.fillStyle = TRACK_TODAY_COLOR;
 	trackCtx.font = '10px system-ui, sans-serif';
 	trackCtx.textBaseline = 'top';
 	trackCtx.textAlign = 'left';
-	trackCtx.fillText('-52w', TRACK_INSET, TRACK_BAR_Y + TRACK_BAR_H + 5);
+	trackCtx.fillText('+52w', TRACK_INSET, TRACK_BAR_Y + TRACK_BAR_H + 5);
 	trackCtx.textAlign = 'right';
-	trackCtx.fillText('+52w', TRACK_INSET + TRACK_USABLE, TRACK_BAR_Y + TRACK_BAR_H + 5);
+	trackCtx.fillText('-52w', TRACK_INSET + TRACK_USABLE, TRACK_BAR_Y + TRACK_BAR_H + 5);
 
 	// today marker at offset 0
 	trackCtx.strokeStyle = TRACK_TODAY_COLOR;
@@ -446,13 +452,14 @@ track.addEventListener('pointerleave', () => {
 
 track.addEventListener('keydown', e => {
 	const k = e.key;
+	// spatial keys: right / End move the thumb right, which plans earlier
 	let o = offset;
-	if (k === 'ArrowLeft') o -= e.shiftKey ? 4 : 1;
-	else if (k === 'ArrowRight') o += e.shiftKey ? 4 : 1;
-	else if (k === 'PageDown') o -= 13;
+	if (k === 'ArrowLeft') o += e.shiftKey ? 4 : 1;
+	else if (k === 'ArrowRight') o -= e.shiftKey ? 4 : 1;
 	else if (k === 'PageUp') o += 13;
-	else if (k === 'Home') o = 0;
-	else if (k === 'End') o = e.shiftKey ? OFFSET_MIN : OFFSET_MAX;
+	else if (k === 'PageDown') o -= 13;
+	else if (k === 'Home') o = OFFSET_MAX;
+	else if (k === 'End') o = OFFSET_MIN;
 	else return;
 	e.preventDefault();
 	setOffset(o);
@@ -657,7 +664,7 @@ function renderText() {
 	}
 	pushUndo();
 	if (font === 'smooth') {
-		smoothText(text);
+		smoothText(text, textReplaceEl.checked);
 	} else {
 		const lvl = drawLevel();
 		if (textReplaceEl.checked) grid.fill(0);
@@ -667,8 +674,9 @@ function renderText() {
 	status('rendered text' + (auto && font !== 'smooth' ? ' (' + (font === '57' ? '5x7' : '3x5') + ' auto)' : ''));
 }
 
-// antialiased: 4x offscreen bold text, per-cell average alpha -> level
-function smoothText(text) {
+// antialiased: 4x offscreen bold text, per-cell average alpha -> level.
+// replace = overwrite the grid, false = merge (max, keeps background noise).
+function smoothText(text, replace) {
 	const S = 4;
 	const gw = C.W * PITCH * S;
 	const gh = C.H * PITCH * S;
@@ -677,20 +685,24 @@ function smoothText(text) {
 	off.height = gh;
 	const octx = off.getContext('2d', { willReadFrequently: true });
 	const maxEff = Math.max(maxLvl, 4);
-	const font = '900 100px system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
-	octx.font = font;
-	const w100 = octx.measureText(text.toUpperCase()).width || 1;
-	const fs = Math.min(gw * 0.92 / w100 * 100, gh * 0.9 / 0.72);
+	const str = text.toUpperCase();
+	// fit + center on the measured ink bounding box, not the em box: works for
+	// caps, lowercase and descenders in any font, no hard-coded cap-height guess
+	octx.font = '900 100px system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
+	const m = octx.measureText(str);
+	const w100 = m.width || 1;
+	const h100 = (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) || 100;
+	const fs = Math.min(gw * 0.96 / w100 * 100, gh * 0.94 / h100 * 100);
 	octx.font = '900 ' + fs + 'px system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
+	const b = octx.measureText(str);
 	octx.fillStyle = '#fff';
 	octx.textAlign = 'center';
-	octx.textBaseline = 'middle';
-	octx.fillText(text.toUpperCase(), gw / 2, gh / 2);
+	octx.textBaseline = 'alphabetic';
+	octx.fillText(str, gw / 2, (gh + b.actualBoundingBoxAscent - b.actualBoundingBoxDescent) / 2);
 	const img = octx.getImageData(0, 0, gw, gh).data;
 	const cellPx = CELL * S;
 	const inPx = Math.round(GAP * S / 2);
 	const n = cellPx * cellPx;
-	const replace = textReplaceEl.checked;
 	for (let c = 0; c < C.W; c++) {
 		for (let r = 0; r < C.H; r++) {
 			const i = c * C.H + r;
@@ -698,11 +710,17 @@ function smoothText(text) {
 			const y0 = r * PITCH * S + inPx;
 			let sum = 0;
 			for (let py = 0; py < cellPx; py++) {
-				let idx = (y0 + py) * gw + x0 * 4 + 3;
+				// pixel (x, y) -> byte (y * gw + x) * 4 + 3; the y stride must be
+				// scaled too or the sampler reads the top quarter of the bitmap
+				let idx = ((y0 + py) * gw + x0) * 4 + 3;
 				for (let px = 0; px < cellPx; px++, idx += 4) sum += img[idx];
 			}
 			const cov = sum / (n * 255);
-			const lvl = cov < 0.12 ? 0 : Math.min(maxEff, Math.round(cov * maxEff));
+			// contrast stretch: below COV_LO is background, above COV_HI a solid
+			// stroke - thin antialiased edges survive, but stems get a crisp
+			// top-level core instead of a washed-out mid-level blur
+			const snap = cov < 0.16 ? 0 : Math.min(1, (cov - 0.16) / 0.46);
+			const lvl = snap <= 0 ? 0 : Math.min(maxEff, Math.max(1, Math.round(snap * maxEff)));
 			if (replace) grid[i] = lvl;
 			else if (lvl > grid[i]) grid[i] = lvl;
 		}
@@ -1080,17 +1098,47 @@ async function doFetch() {
 		}
 		actual = res.map;
 		cacheActual(user, res.map);
-		const avg = C.meanDailyCommits(res.map, todayMs, C.AVG_DAYS);
-		C.recommendMapping(avg, recommended);
+		C.recommendMapping(res.map, todayMs, recommended);
 		setMapping(recommended.low, recommended.high, 'fetch'); // refreshes suggestion + plan
 		scheduleRender();
 		status('synced @' + user + ' · ' + res.map.size + ' days with commits · ' + res.note
-			+ ' · avg ' + avg.toFixed(1) + '/day (' + C.AVG_DAYS + ' d) → low ' + low + ', high ' + high);
+			+ ' · med ' + recommended.med + ', p90 ' + recommended.p90 + ' (90 d) → low ' + low + ', high ' + high);
 	} catch (err) {
 		status('fetch failed: ' + err.message + ' — low/high mapping still works without sync');
 	}
 	btnFetch.disabled = false;
 }
+
+// ---- demo (simulated fetch + painted picture, e.g. for the README screenshot)
+const DEMO_OFFSET = 26;  // today on the center column (52 - offset)
+const DEMO_LOW = 5;
+const DEMO_HIGH = 10;
+
+$('btnDemo').addEventListener('click', () => {
+	pushUndo();
+	setOffset(DEMO_OFFSET);
+	// typical quiet account: sparse light-green days, weekday-weighted, in slow
+	// busy-season waves; kept light (level 1 only) so the text pops. Seeded LCG
+	// so the picture (e.g. the README screenshot) is reproducible.
+	let seed = 0x2f6e2b1;
+	grid.fill(0);
+	for (let c = 0; c < C.W; c++) {
+		const wave = 0.5 + 0.5 * Math.sin(c * 0.55 + 1.3);
+		for (let r = 0; r < C.H; r++) {
+			seed = (seed * 1664525 + 1013904223) >>> 0;
+			const dice = seed >>> 24; // 0..255
+			const base = (r === 0 || r === 6) ? 6 : 16;
+			if (dice < base * (0.35 + wave)) grid[c * C.H + r] = 1;
+		}
+	}
+	maxLvl = C.maxCell(grid);
+	textEl.value = 'hello world';
+	textFontEl.value = 'smooth';
+	smoothText('hello world', false); // merge: noise stays between the glyphs
+	setMapping(DEMO_LOW, DEMO_HIGH, 'fetch');
+	markDirty();
+	status('demo: typical background + smooth "hello world" · low 5 / high 10, like a fetched recommendation');
+});
 
 // ---- init
 function setupCanvas() {

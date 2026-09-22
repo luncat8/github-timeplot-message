@@ -9,10 +9,33 @@ function ok(cond, msg) {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// the app runs on the real clock, so expectations are built from today, not
+// hard-coded dates (this suite must survive midnight)
+const realToday = C.localTodayMs();
+const keyOfDay = ms => C.dateKeyOf(ms);
+const todayKey = keyOfDay(realToday);
+const shortLabel = ms => {
+	const d = new Date(ms);
+	const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+	const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+	return wd + ' ' + mo + ' ' + d.getDate();
+};
+const rangeEndFor = offset => keyOfDay(C.gridStartMs(realToday, offset) + 370 * C.DAY);
+
 // ---- fake canvas 2d context (no-op, records nothing)
 const ctx2d = new Proxy({}, {
 	get(t, k) {
 		if (k in t) return t[k];
+		if (k === 'measureText') return () => ({ width: 100, actualBoundingBoxAscent: 40, actualBoundingBoxDescent: 10 });
+		// alpha band in the vertical middle -> smooth text paints its center rows
+		if (k === 'getImageData') return (x, y, w, h) => {
+			const data = new Uint8ClampedArray(w * h * 4);
+			for (let py = 0; py < h; py++) {
+				if (py < h * 0.25 || py > h * 0.75) continue;
+				for (let px = 0; px < w; px++) data[(py * w + px) * 4 + 3] = 255;
+			}
+			return { data };
+		};
 		return () => {};
 	},
 	set(t, k, v) { t[k] = v; return true; },
@@ -66,7 +89,7 @@ function makeEl(id) {
 const IDS = ['plot', 'plotWrap', 'tip', 'range', 'suggest', 'legend', 'status',
 	'text', 'textFont', 'textReplace', 'offsetVal',
 	'track', 'trackWrap', 'trackLabel', 'plan', 'planSummary', 'planDays', 'planCarry',
-	'low', 'lowVal', 'high', 'highVal', 'display', 'ghUser', 'ghToken', 'btnFetch', 'fileImport',
+	'low', 'lowVal', 'high', 'highVal', 'display', 'ghUser', 'ghToken', 'btnFetch', 'btnDemo', 'fileImport',
 	'btnExport', 'btnPng', 'btnImport', 'btnPaste', 'toolDraw', 'toolErase', 'toolRect',
 	'btnFill', 'btnClear', 'btnUndo', 'btnRender'];
 const els = {};
@@ -106,10 +129,10 @@ Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true }
 globalThis.prompt = () => null;
 globalThis.confirm = () => true;
 // stubbed contributions provider (deno api shape): today 3 commits, yesterday 1,
-// then 4 commits on each of the 88 days before -> 90-day mean (today excluded)
-// = (1 + 88 * 4) / 90 = 3.92 -> recommended low 4, high max(8, 4 + 5) = 9
-const stubDays = [{ date: '2026-09-21', count: 3 }, { date: '2026-09-20', count: 1 }];
-const stubCursor = new Date(2026, 8, 20);
+// then 4 commits on each of the 88 days before -> over the 90 window days
+// (today excluded): median 4, p90 4 -> recommended low 4, high max(8, 4 + 5) = 9
+const stubDays = [{ date: todayKey, count: 3 }, { date: keyOfDay(realToday - C.DAY), count: 1 }];
+const stubCursor = new Date(realToday - C.DAY);
 for (let i = 0; i < 88; i++) {
 	stubCursor.setDate(stubCursor.getDate() - 1);
 	stubDays.push({ date: C.dateKeyOf(stubCursor.getTime()), count: 4 });
@@ -134,17 +157,17 @@ ok(els.track.height === TRACK_H, 'track canvas backing height set');
 ok(els.status.textContent.includes('ready'), 'init status set');
 ok(els.legend.innerHTML.includes('empty'), 'empty-grid legend hint');
 ok(/^\d{4}-\d{2}-\d{2}  →  \d{4}-\d{2}-\d{2}$/.test(els.range.textContent), 'date range label: ' + els.range.textContent);
-ok(els.offsetVal.textContent === '0', 'offset readout shows 0 at start');
+ok(els.offsetVal.textContent === '+26', 'fresh start centers today (offset +26): ' + els.offsetVal.textContent);
 ok(els.lowVal.textContent === '0' && els.highVal.textContent === '10', 'mapping readouts at defaults: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
 
-// today (2026-09-21 Monday) must be highlighted window: offset 0 ends Sat 2026-09-26
-ok(els.range.textContent.endsWith('2026-09-26'), 'range ends this Saturday: ' + els.range.textContent);
+// today at column 52 - 26 = 26, the center column of 53
+ok(els.range.textContent.endsWith(rangeEndFor(26)), 'range ends half a year ahead: ' + els.range.textContent);
 
-// commit plan: today sits in the last column at offset 0 -> 6 rows (Mon..Sat)
-ok(els.planSummary.textContent === '6 days · nothing planned', 'plan summary at init: ' + els.planSummary.textContent);
-ok(els.plan.children.length === 6, 'plan renders one chip per remaining day: ' + els.plan.children.length);
-ok(chip(0)['data-key'] === '2026-09-21', 'chip 0 keyed to today: ' + chip(0)['data-key']);
-ok(chip(0).children[0].textContent === 'today · Mon Sep 21', 'chip 0 date line: ' + chip(0).children[0].textContent);
+// commit plan: today sits mid-grid -> full default window (14 days)
+ok(els.planSummary.textContent === '14 days · nothing planned', 'plan summary at init: ' + els.planSummary.textContent);
+ok(els.plan.children.length === 14, 'plan renders the default 14-day window: ' + els.plan.children.length);
+ok(chip(0)['data-key'] === todayKey, 'chip 0 keyed to today: ' + chip(0)['data-key']);
+ok(chip(0).children[0].textContent === 'today · ' + shortLabel(realToday), 'chip 0 date line: ' + chip(0).children[0].textContent);
 ok(chip(0).className.includes('today'), 'chip 0 marked today: ' + chip(0).className);
 ok(chip(0).children[2].textContent === 'rest', 'empty day reads rest: ' + chip(0).children[2].textContent);
 
@@ -162,7 +185,7 @@ ok(els.legend.innerHTML.includes('L1 ≈ 10 commits'), 'legend maps the drawn le
 ok(els.legend.innerHTML.includes('L0 background (none)'), 'legend: background (none) while low is 0');
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion box has Today row');
 const saved = store['gtm-v1'];
-ok(saved && saved.startsWith('GTM1|0|'), 'autosaved GTM1 string exists');
+ok(saved && saved.startsWith('GTM1|26|'), 'autosaved GTM1 string exists');
 const parsed = C.parseGrid(saved);
 ok(parsed.grid[20 * 7 + 3] === 1 && parsed.grid[21 * 7 + 3] === 1, 'stroke painted level 1 into saved grid');
 
@@ -202,21 +225,24 @@ for (let i = 0; i < C.N; i++) {
 ok(lit === 28, 'rendered "HI" = 28 lit cells, got ' + lit);
 ok(allLvl3, 'text painted at the draw level (current max)');
 
-// track slider drag into future: x = midpoint (offset 0) + half usable -> offset ~ +26
+// track slider: mirrors the plot, not the timeline - the thumb at the left end
+// pushes the grid into the future (+52), the right end is the past (-52), so
+// the plot's dates follow the drag direction
 const TRACK_INSET = 30;
 const TRACK_USABLE = LOGICAL_W - TRACK_INSET;
 function trackXForOffset(o) {
-	return TRACK_INSET + (o + 52) / 104 * TRACK_USABLE;
+	return TRACK_INSET + (52 - o) / 104 * TRACK_USABLE;
 }
 function offsetForTrackX(x) {
-	return Math.round(-52 + (x - TRACK_INSET) / TRACK_USABLE * 104);
+	return Math.round(52 - (x - TRACK_INSET) / TRACK_USABLE * 104);
 }
+ok(trackXForOffset(5) < trackXForOffset(-5), 'future offsets sit left of past offsets');
 
 const xPlus5 = trackXForOffset(5);
 els.track.fire('pointerdown', { clientX: xPlus5, clientY: TRACK_H / 2, pointerId: 2, preventDefault() {} });
 els.track.fire('pointerup', { pointerId: 2 });
 await sleep(400);
-ok(els.range.textContent.endsWith('2026-10-31'), 'track click offset +5 ends 2026-10-31: ' + els.range.textContent);
+ok(els.range.textContent.endsWith(rangeEndFor(5)), 'track click offset +5 ends ' + rangeEndFor(5) + ': ' + els.range.textContent);
 ok(els.suggest.innerHTML.includes('Today'), 'offset +5: today still inside grid (earlier column)');
 ok(els.offsetVal.textContent === '+5', 'offset readout shows +5');
 
@@ -230,42 +256,54 @@ els.plot.fire('wheel', { deltaY: -19, preventDefault() {}, cancelable: true }); 
 await sleep(50);
 ok(parseInt(els.offsetVal.textContent, 10) === -3, 'wheel -19 brought -4 to -3: ' + els.offsetVal.textContent);
 
-// back to 0 via direct API (no slider anymore)
-import('../app.js').catch(() => {}); // no-op: ensure module stays loaded
-// use the keyboard shortcut path on the track
+// keyboard path on the track is spatial too: Home = left end = +52
 els.track.focus = () => {};
 els.track.fire('keydown', { key: 'Home', preventDefault() {} });
 await sleep(50);
-ok(parseInt(els.offsetVal.textContent, 10) === 0, 'track Home resets offset to 0: ' + els.offsetVal.textContent);
+ok(els.offsetVal.textContent === '+52', 'track Home jumps to the future end: ' + els.offsetVal.textContent);
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion back to Today');
+els.track.fire('keydown', { key: 'End', preventDefault() {} });
+await sleep(50);
+ok(els.offsetVal.textContent === '-52', 'track End jumps to the past end: ' + els.offsetVal.textContent);
+els.track.fire('keydown', { key: 'ArrowLeft', preventDefault() {} });
+await sleep(50);
+ok(els.offsetVal.textContent === '-51', 'ArrowLeft moves the thumb left = future: ' + els.offsetVal.textContent);
 
-// plan follows painted cells: draw into today (Mon of last column) and yesterday (Sun)
-paintAt(52, 1);
-paintAt(52, 0);
+// back to the centered default via a track click (today in the center column)
+els.track.fire('pointerdown', { clientX: trackXForOffset(26), clientY: TRACK_H / 2, pointerId: 3, preventDefault() {} });
+els.track.fire('pointerup', { pointerId: 3 });
+await sleep(50);
+ok(els.offsetVal.textContent === '+26', 'track click re-centers today: ' + els.offsetVal.textContent);
+
+// plan follows painted cells: draw into today (center column 26, row 1) and yesterday (row 0)
+els.btnClear.click(); // fresh grid: at this offset the past window crosses the HI pixels
+const todayRow = new Date(realToday).getDay();
+paintAt(26, todayRow);
+paintAt(todayRow > 0 ? 26 : 25, todayRow > 0 ? todayRow - 1 : 6);
 await sleep(400);
 // yesterday is outside the plan window (rows start today), it only feeds the shortfall
-ok(els.planSummary.textContent === '6 days · 10 commits on 1 day', 'plan summary after painting: ' + els.planSummary.textContent);
+ok(els.planSummary.textContent === '14 days · 10 commits on 1 day', 'plan summary after painting: ' + els.planSummary.textContent);
 ok(chip(0).children[1].textContent === 'L1 · 10 commits', 'today chip level + commits: ' + chip(0).children[1].textContent);
 ok(chip(0).children[2].textContent === 'planned', 'today chip without sync reads planned: ' + chip(0).children[2].textContent);
 ok(chip(0).className.includes('due'), 'today chip marked due: ' + chip(0).className);
 ok(chip(1).children[2].textContent === 'rest', 'empty future day reads rest: ' + chip(1).children[2].textContent);
 ok(chip(0).title === 'plan 10 commits', 'chip title without sync: ' + chip(0).title);
 
-// the plan never runs past the end of the grid, whatever the window says
+// the plan window follows the selector (the grid has 188 days after today)
 els.planDays.value = '30';
 els.planDays.fire('change');
-ok(els.plan.children.length === 6, '30 requested days still clip at the grid end: ' + els.plan.children.length);
+ok(els.plan.children.length === 30, '30-day window renders 30 chips: ' + els.plan.children.length);
 els.planDays.value = '7';
 els.planDays.fire('change');
-ok(els.plan.children.length === 6, 'short window keeps the same rows: ' + els.plan.children.length);
+ok(els.plan.children.length === 7, 'short window keeps 7 rows: ' + els.plan.children.length);
 
-// sync (stubbed contributions api) -> recommended low / high from the 90-day mean,
+// sync (stubbed contributions api) -> recommended low / high from med / p90,
 // actual counts, carry of the 7 day shortfall
 els.ghUser.value = 'octocat';
 els.btnFetch.click();
 await sleep(100);
 ok(els.status.textContent.includes('synced @octocat'), 'fetch status: ' + els.status.textContent);
-ok(els.status.textContent.includes('avg 3.9/day (90 d) → low 4, high 9'), 'fetch reports the recommendation: ' + els.status.textContent);
+ok(els.status.textContent.includes('med 4, p90 4 (90 d) → low 4, high 9'), 'fetch reports the recommendation: ' + els.status.textContent);
 ok(els.lowVal.textContent === '4' && els.highVal.textContent === '9', 'sliders follow the recommendation: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
 ok(els.low.value === '4' && els.high.value === '9', 'slider inputs updated too');
 ok(els.suggest.innerHTML.includes('actual 1'), 'suggestion shows yesterday actual');
@@ -273,7 +311,7 @@ ok(els.suggest.innerHTML.includes('actual 1'), 'suggestion shows yesterday actua
 // the 6 background days before it 4 each and all met by the stub's 4 commits
 ok(chip(0).children[2].textContent === '3 done · 14 left', 'today chip with sync + carry: ' + chip(0).children[2].textContent);
 ok(chip(1).children[1].textContent === 'L0 · 4 commits', 'background day chip carries low: ' + chip(1).children[1].textContent);
-ok(els.planSummary.textContent === '6 days · 29 commits on 6 days · behind 8 over the last 7 days', 'plan summary with low 4: ' + els.planSummary.textContent);
+ok(els.planSummary.textContent === '7 days · 33 commits on 7 days · behind 8 over the last 7 days', 'plan summary with low 4: ' + els.planSummary.textContent);
 ok(chip(0).title === 'plan 9 commits + 8 carried from the last 7 days', 'chip title explains the carry: ' + chip(0).title);
 els.planCarry.checked = false;
 els.planCarry.fire('change');
@@ -361,6 +399,27 @@ els.text.value = 'HI';
 els.btnRender.click();
 await sleep(400);
 ok(els.status.textContent.includes('5x7 auto'), 'auto font picked 5x7 for short text: ' + els.status.textContent);
+
+// demo button: simulated typical account + smooth HELLO WORLD, today centered
+els.btnDemo.click();
+await sleep(400);
+ok(els.offsetVal.textContent === '+26', 'demo centers today: ' + els.offsetVal.textContent);
+ok(els.lowVal.textContent === '5' && els.highVal.textContent === '10', 'demo sets the typical recommended mapping: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
+ok(els.text.value === 'hello world' && els.textFont.value === 'smooth', 'demo shows how it was made');
+ok(els.status.textContent.includes('demo'), 'demo status: ' + els.status.textContent);
+const savedDemo = C.parseGrid(store['gtm-v1']);
+let noise = 0, core = 0;
+for (let i = 0; i < C.N; i++) {
+	if (savedDemo.grid[i] === 1 || savedDemo.grid[i] === 2) noise++;
+	else if (savedDemo.grid[i] === 4) core++;
+}
+ok(noise > 20, 'demo background noise present: ' + noise + ' cells');
+ok(core > 150, 'demo smooth text fills the center rows: ' + core + ' cells at the top level');
+ok(els.legend.innerHTML.includes('L4'), 'legend covers the smooth top level');
+els.btnUndo.click();
+await sleep(400);
+const savedUndo2 = C.parseGrid(store['gtm-v1']);
+ok(savedUndo2.off === -3 && C.maxCell(savedUndo2.grid) > 0, 'undo restores the pre-demo grid + offset');
 
 console.log(failures ? '\n' + failures + ' FAILURES' : '\nsmoke test passed');
 process.exit(failures ? 1 : 0);

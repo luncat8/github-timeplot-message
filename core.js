@@ -150,25 +150,38 @@ export const MAP_MAX = 50;      // slider range for low / high (commits per day)
 export const MIN_SPREAD = 5;    // drawn days are at least this far above background
 export const AVG_DAYS = 90;
 
-// Mean commits per day over the `days` days before todayMs (today is excluded:
-// it is still in progress). Dates absent from the map count as 0. Walks with
-// setDate so DST days do not shift the keys.
-export function meanDailyCommits(map, todayMs, days) {
-	const d = new Date(todayMs);
-	let sum = 0;
-	for (let i = 0; i < days; i++) {
-		d.setDate(d.getDate() - 1);
-		sum += map.get(dateKeyOf(d.getTime())) || 0;
+const REC_COUNTS = new Int32Array(AVG_DAYS); // scratch for recommendMapping, sorted in place
+
+function sortAsc(a, n) {
+	for (let i = 1; i < n; i++) {
+		const v = a[i];
+		let j = i - 1;
+		while (j >= 0 && a[j] > v) {
+			a[j + 1] = a[j];
+			j--;
+		}
+		a[j + 1] = v;
 	}
-	return sum / days;
 }
 
-// Background days keep the usual rate, drawn days double it (at least +MIN_SPREAD)
-// so the picture stands out from the day-to-day noise. Fills the caller's out.
-export function recommendMapping(avg, out) {
-	const low = Math.min(MAP_MAX, Math.round(avg));
-	out.low = low;
-	out.high = Math.min(MAP_MAX, Math.max(low * 2, low + MIN_SPREAD));
+// Robust low / high from the daily counts of the AVG_DAYS days before todayMs
+// (today excluded: still in progress; absent dates count 0). Quantiles instead
+// of the mean so spikes and inactive stretches cannot drag the numbers:
+//   low  = median day      background keeps the typical rate
+//   high = p90 busy day    drawing sits clearly above the day-to-day noise,
+//          floored at 2*low / low + MIN_SPREAD so quiet accounts still get a
+//          visible picture. Fills out.low/high/med/p90.
+export function recommendMapping(map, todayMs, out) {
+	const d = new Date(todayMs);
+	for (let i = 0; i < AVG_DAYS; i++) {
+		d.setDate(d.getDate() - 1);
+		REC_COUNTS[i] = map.get(dateKeyOf(d.getTime())) || 0;
+	}
+	sortAsc(REC_COUNTS, AVG_DAYS);
+	out.med = REC_COUNTS[Math.ceil(0.5 * AVG_DAYS) - 1];  // nearest-rank quantiles
+	out.p90 = REC_COUNTS[Math.ceil(0.9 * AVG_DAYS) - 1];
+	out.low = Math.min(MAP_MAX, out.med);
+	out.high = Math.min(MAP_MAX, Math.max(out.p90, out.low * 2, out.low + MIN_SPREAD));
 	return out;
 }
 

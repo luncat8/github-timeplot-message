@@ -192,31 +192,51 @@ eq(plan.dueDays, 6, 'low 5: every day is due');
 eq(C.shortfallOf(pg, pkeys, new Map([['2026-09-20', 2]]), ti - 2, ti - 1, 4, 5, 10), 13,
 	'low 5: shortfall counts background days (5 - 0) + drawn day (10 - 2)');
 
-// ---- mapping recommendation
-const rec = { low: 0, high: 0 };
-C.recommendMapping(0, rec);
-eq(rec.low, 0, 'avg 0 -> low 0');
-eq(rec.high, 5, 'avg 0 -> high = MIN_SPREAD');
-C.recommendMapping(4.6, rec);
-eq(rec.low, 5, 'avg 4.6 -> low 5');
-eq(rec.high, 10, 'avg 4.6 -> high 10 (double)');
-C.recommendMapping(1.2, rec);
-eq(rec.low, 1, 'avg 1.2 -> low 1');
-eq(rec.high, 6, 'avg 1.2 -> high 6 (low + spread beats double)');
-C.recommendMapping(40, rec);
-eq(rec.high, C.MAP_MAX, 'recommendation clamps to MAP_MAX');
+// ---- mapping recommendation (robust quantiles over the 90 days before today)
+// helper: Map of counts for the `n` days before today (today itself excluded)
+function daysMap(counts) {
+	const m = new Map();
+	const d = new Date(todayMs);
+	for (let i = 0; i < counts.length; i++) {
+		d.setDate(d.getDate() - 1);
+		m.set(C.dateKeyOf(d.getTime()), counts[i]);
+	}
+	return m;
+}
+
+const rec = { low: 0, high: 0, med: 0, p90: 0 };
+C.recommendMapping(new Map(), todayMs, rec);
+eq(rec.low, 0, 'no history -> low 0');
+eq(rec.high, 5, 'no history -> high = MIN_SPREAD');
+eq(rec.med, 0, 'no history -> med = 0');
+eq(rec.p90, 0, 'no history -> p90 = 0');
+
+C.recommendMapping(daysMap(new Array(90).fill(0).map((_, i) => (i < 45 ? 3 : 6))), todayMs, rec);
+eq(rec.med, 3, '45x3 + 45x6 -> median 3');
+eq(rec.p90, 6, '45x3 + 45x6 -> p90 6');
+eq(rec.low, 3, 'median day -> low');
+eq(rec.high, 8, 'high = max(p90 6, 2*low 6, low+5 8) = 8');
+
+C.recommendMapping(daysMap([...new Array(60).fill(0), ...new Array(20).fill(1), ...new Array(10).fill(3)]), todayMs, rec);
+eq(rec.low, 0, 'quiet account: median 0 -> background stays empty');
+eq(rec.high, 5, 'quiet account: high = max(p90 3, low+5) = 5');
+
+// a single spike must not drag the recommendation (the old mean jumped to ~2.5)
+C.recommendMapping(daysMap([...new Array(89).fill(2), 50]), todayMs, rec);
+eq(rec.med, 2, '89x2 + one 50 -> median 2 (spike ignored)');
+eq(rec.p90, 2, '89x2 + one 50 -> p90 2');
+eq(rec.high, 7, '89x2 + one 50 -> high = low + spread');
+
+// busy account: p90 above MAP_MAX clamps, low follows its own cap
+C.recommendMapping(daysMap(new Array(90).fill(40)), todayMs, rec);
+eq(rec.low, 40, 'steady 40/day -> low 40');
+eq(rec.high, C.MAP_MAX, 'steady 40/day -> high clamps to MAP_MAX');
 ok(rec.high >= rec.low, 'high never below low');
 
-const avgMap = new Map();
-const cursor = new Date(todayMs);
-for (let i = 0; i < 30; i++) {
-	cursor.setDate(cursor.getDate() - 1);
-	avgMap.set(C.dateKeyOf(cursor.getTime()), 3);
-}
-avgMap.set(C.dateKeyOf(todayMs), 99); // today must not count
-eq(C.meanDailyCommits(avgMap, todayMs, 90), 1, 'mean over 90 days: 30 * 3 / 90 = 1, today excluded');
-eq(C.meanDailyCommits(avgMap, todayMs, 30), 3, 'mean over 30 days: every day 3');
-eq(C.meanDailyCommits(new Map(), todayMs, 90), 0, 'empty map -> 0');
+// today is excluded from the window
+C.recommendMapping(daysMap(new Array(89).fill(0)), todayMs, rec);
+C.recommendMapping(daysMap(new Array(89).fill(0).concat([9])), todayMs, rec);
+eq(rec.med, 0, 'a busy today does not change the recommendation');
 
 // ---- storage round trip
 function randGrid(seed) {
