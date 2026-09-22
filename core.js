@@ -31,11 +31,15 @@ export function weekStartSundayMs(ms) {
 	return d.getTime();
 }
 
-// Grid start (a local Sunday). 53 whole weeks ending on the Saturday of
-// (this week + offset). end - 370 days lands on a Sunday because 370 % 7 == 6.
+// Grid start (a local Sunday). `offsetWeeks` slides the grid: positive shifts it
+// forward (today's column moves left, future extends right), negative back. At
+// offset 0 today sits in the center column (col (W-1)/2 = 26), which is also the
+// slider center / today-marker position — so the thumb at rest, the today marker
+// and today's cell all share the middle of the grid together. 370 = 52*7 + 6 and
+// 370 % 7 == 6, so a Sunday start keeps all 53 weeks on whole-week rows.
 export function gridStartMs(todayMs, offsetWeeks) {
-	const end = weekStartSundayMs(todayMs) + (6 + offsetWeeks * 7) * DAY;
-	return end - (W * H - 1) * DAY;
+	const center = (W - 1) / 2; // 26 weeks of history behind today at offset 0
+	return weekStartSundayMs(todayMs) + (offsetWeeks - center) * 7 * DAY;
 }
 
 export function dateKeyOf(ms) {

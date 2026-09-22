@@ -146,9 +146,13 @@
   Home = left end = +52 (future), End = right end = -52 (past), ArrowRight = thumb
   right = older. Wheel keeps its "scroll down = older" convention on both plot
   and track.
-- With today always at column `52 - offset`, the default `offset = 26` centers
-  today in the 53-week grid (26 history columns left, 26 plan columns right).
-  Saved sessions restore their own offset; only fresh sessions center.
+- With today always at column `26 - offset` (offset 0 = center column 26 of
+  53), the slider center / today marker / thumb at rest all sit where today is
+  centered — half a year of history left, half a year of plan right. Positive
+  offset slides the grid forward (today walks left, into the future), negative
+  back toward the past. Default `offset = 0`; saved sessions keep their stored
+  offset, so a legacy saved `+26` now opens with today on the left edge (re-center
+  with a click on the track middle).
 
 ## smooth text (small-bitmap antialiasing)
 

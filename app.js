@@ -66,9 +66,9 @@ const TRACK_TODAY_COLOR = '#57606a';
 
 // ---- state
 const grid = new Uint8Array(C.N);
-// Fresh sessions center today (column = 52 - offset); saved sessions restore
-// their own offset in loadSaved().
-let offset = 26;
+// Fresh sessions center today (offset 0 -> column (W-1)/2 = 26, the slider
+// center); saved sessions restore their own offset in loadSaved().
+let offset = 0;
 let tool = 'draw';
 let displayMode = 'grad';
 let low = 0;                // commits on background (level 0) days
@@ -1110,7 +1110,7 @@ async function doFetch() {
 }
 
 // ---- demo (simulated fetch + painted picture, e.g. for the README screenshot)
-const DEMO_OFFSET = 26;  // today on the center column (52 - offset)
+const DEMO_OFFSET = 0;  // today on the center column (offset 0 -> col 26)
 const DEMO_LOW = 5;
 const DEMO_HIGH = 10;
 

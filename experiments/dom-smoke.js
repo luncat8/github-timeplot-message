@@ -157,11 +157,11 @@ ok(els.track.height === TRACK_H, 'track canvas backing height set');
 ok(els.status.textContent.includes('ready'), 'init status set');
 ok(els.legend.innerHTML.includes('empty'), 'empty-grid legend hint');
 ok(/^\d{4}-\d{2}-\d{2}  →  \d{4}-\d{2}-\d{2}$/.test(els.range.textContent), 'date range label: ' + els.range.textContent);
-ok(els.offsetVal.textContent === '+26', 'fresh start centers today (offset +26): ' + els.offsetVal.textContent);
+ok(els.offsetVal.textContent === '0', 'fresh start centers today (offset 0): ' + els.offsetVal.textContent);
 ok(els.lowVal.textContent === '0' && els.highVal.textContent === '10', 'mapping readouts at defaults: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
 
-// today at column 52 - 26 = 26, the center column of 53
-ok(els.range.textContent.endsWith(rangeEndFor(26)), 'range ends half a year ahead: ' + els.range.textContent);
+// today at column 26 - 0 = 26, the center column of 53
+ok(els.range.textContent.endsWith(rangeEndFor(0)), 'range ends half a year ahead: ' + els.range.textContent);
 
 // commit plan: today sits mid-grid -> full default window (14 days)
 ok(els.planSummary.textContent === '14 days · nothing planned', 'plan summary at init: ' + els.planSummary.textContent);
@@ -185,7 +185,7 @@ ok(els.legend.innerHTML.includes('L1 ≈ 10 commits'), 'legend maps the drawn le
 ok(els.legend.innerHTML.includes('L0 background (none)'), 'legend: background (none) while low is 0');
 ok(els.suggest.innerHTML.includes('Today'), 'suggestion box has Today row');
 const saved = store['gtm-v1'];
-ok(saved && saved.startsWith('GTM1|26|'), 'autosaved GTM1 string exists');
+ok(saved && saved.startsWith('GTM1|0|'), 'autosaved GTM1 string exists');
 const parsed = C.parseGrid(saved);
 ok(parsed.grid[20 * 7 + 3] === 1 && parsed.grid[21 * 7 + 3] === 1, 'stroke painted level 1 into saved grid');
 
@@ -270,10 +270,10 @@ await sleep(50);
 ok(els.offsetVal.textContent === '-51', 'ArrowLeft moves the thumb left = future: ' + els.offsetVal.textContent);
 
 // back to the centered default via a track click (today in the center column)
-els.track.fire('pointerdown', { clientX: trackXForOffset(26), clientY: TRACK_H / 2, pointerId: 3, preventDefault() {} });
+els.track.fire('pointerdown', { clientX: trackXForOffset(0), clientY: TRACK_H / 2, pointerId: 3, preventDefault() {} });
 els.track.fire('pointerup', { pointerId: 3 });
 await sleep(50);
-ok(els.offsetVal.textContent === '+26', 'track click re-centers today: ' + els.offsetVal.textContent);
+ok(els.offsetVal.textContent === '0', 'track click re-centers today: ' + els.offsetVal.textContent);
 
 // plan follows painted cells: draw into today (center column 26, row 1) and yesterday (row 0)
 els.btnClear.click(); // fresh grid: at this offset the past window crosses the HI pixels
@@ -329,13 +329,13 @@ ok(els.status.textContent.includes('cache (6h)') && els.lowVal.textContent === '
 // paste import of a known payload
 const g = new Uint8Array(C.N);
 for (let i = 0; i < C.N; i++) g[i] = (i * 7) % 5;
-globalThis.prompt = () => C.serializeGrid(-3, g);
+globalThis.prompt = () => C.serializeGrid(-52, g);
 els.btnPaste.click();
 await sleep(400); // autosave debounce
 const saved3 = C.parseGrid(store['gtm-v1']);
-ok(saved3.off === -3, 'paste import offset -3');
+ok(saved3.off === -52, 'paste import offset -52');
 ok(saved3.grid.every((v, i) => v === g[i]), 'paste import grid equal');
-ok(els.offsetVal.textContent === '-3', 'offset readout synced after import');
+ok(els.offsetVal.textContent === '-52', 'offset readout synced after import');
 ok(els.planSummary.textContent.includes('outside the grid'), 'off-grid plan shows the empty state: ' + els.planSummary.textContent);
 ok(els.plan.children.length === 0, 'off-grid plan drops every chip: ' + els.plan.children.length);
 
@@ -370,7 +370,7 @@ ok(els.legend.innerHTML.includes('empty'), 'legend back to empty hint');
 els.btnUndo.click();
 await sleep(400);
 const saved5 = C.parseGrid(store['gtm-v1']);
-ok(saved5.grid.every((v, i) => v === g[i]) && saved5.off === -3, 'undo restores pre-clear grid + offset');
+ok(saved5.grid.every((v, i) => v === g[i]) && saved5.off === -52, 'undo restores pre-clear grid + offset');
 
 // auto font: 3x5 when 5x7 would overflow, 5x7 when it fits, no-op when neither fits
 els.textFont.value = 'auto';
@@ -403,7 +403,7 @@ ok(els.status.textContent.includes('5x7 auto'), 'auto font picked 5x7 for short 
 // demo button: simulated typical account + smooth HELLO WORLD, today centered
 els.btnDemo.click();
 await sleep(400);
-ok(els.offsetVal.textContent === '+26', 'demo centers today: ' + els.offsetVal.textContent);
+ok(els.offsetVal.textContent === '0', 'demo centers today: ' + els.offsetVal.textContent);
 ok(els.lowVal.textContent === '5' && els.highVal.textContent === '10', 'demo sets the typical recommended mapping: ' + els.lowVal.textContent + '/' + els.highVal.textContent);
 ok(els.text.value === 'hello world' && els.textFont.value === 'smooth', 'demo shows how it was made');
 ok(els.status.textContent.includes('demo'), 'demo status: ' + els.status.textContent);
@@ -419,7 +419,7 @@ ok(els.legend.innerHTML.includes('L4'), 'legend covers the smooth top level');
 els.btnUndo.click();
 await sleep(400);
 const savedUndo2 = C.parseGrid(store['gtm-v1']);
-ok(savedUndo2.off === -3 && C.maxCell(savedUndo2.grid) > 0, 'undo restores the pre-demo grid + offset');
+ok(savedUndo2.off === -52 && C.maxCell(savedUndo2.grid) > 0, 'undo restores the pre-demo grid + offset');
 
 console.log(failures ? '\n' + failures + ' FAILURES' : '\nsmoke test passed');
 process.exit(failures ? 1 : 0);

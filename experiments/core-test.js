@@ -28,23 +28,23 @@ eq(new Date(todayMs).getDay(), 1, '2026-09-21 is Monday (sanity)');
 
 const start0 = C.gridStartMs(todayMs, 0);
 eq(new Date(start0).getDay(), 0, 'grid start is a Sunday');
-eq(C.dateKeyOf(start0), '2025-09-21', 'offset 0 starts 2025-09-21 (53 weeks ending this week)');
-// last cell = Saturday of this week
+eq(C.dateKeyOf(start0), '2026-03-22', 'offset 0 centers today (start = this week - 26 weeks)');
+// grid spans 26 weeks before today and 26 after: last cell is a Saturday
 const lastKey = C.dateKeyOf(start0 + 370 * C.DAY);
-eq(lastKey, '2026-09-26', 'offset 0 ends Saturday 2026-09-26');
+eq(lastKey, '2027-03-27', 'offset 0 ends Saturday 2027-03-27 (half a year ahead)');
 
 const start1 = C.gridStartMs(todayMs, 1);
 eq(start1 - start0, 7 * C.DAY, 'offset +1 shifts exactly one week');
-eq(C.dateKeyOf(start1 + 370 * C.DAY), '2026-10-03', 'offset +1 ends 2026-10-03');
-eq(C.dateKeyOf(C.gridStartMs(todayMs, -1) + 370 * C.DAY), '2026-09-19', 'offset -1 ends 2026-09-19');
+eq(C.dateKeyOf(start1 + 370 * C.DAY), '2027-04-03', 'offset +1 ends 2027-04-03');
+eq(C.dateKeyOf(C.gridStartMs(todayMs, -1) + 370 * C.DAY), '2027-03-20', 'offset -1 ends 2027-03-20');
 
 // buildGridDates fills keys/labels; today index correct
 const keys = new Array(C.N);
 const labels = new Array(C.N);
 const months = new Array(C.W);
 C.buildGridDates(todayMs, 0, keys, labels, months);
-eq(keys[0], '2025-09-21', 'cell 0 key');
-eq(C.todayIndex(keys, todayMs), 365, 'today index = 365 (Mon of last column)');
+eq(keys[0], '2026-03-22', 'cell 0 key');
+eq(C.todayIndex(keys, todayMs), 183, 'today index = 183 (Mon of center column 26)');
 eq(C.dateKeyOf(new Date(2020, 1, 29).getTime()), '2020-02-29', 'dateKey handles leap day');
 // DST crossing (US spring forward 2026-03-08) in the grid window:
 // consecutive cell keys must be consecutive local calendar days
@@ -58,7 +58,7 @@ for (let i = 1; i < C.N; i++) {
 	if (b.getTime() !== a.getTime()) consecBad++;
 }
 eq(consecBad, 0, 'cell keys are consecutive local days across DST (2026-03 window)');
-eq(labels[365], 'Mon Mar 9, 2026', 'label at today index: ' + labels[365]);
+eq(labels[183], 'Mon Mar 9, 2026', 'label at today index: ' + labels[183]);
 
 // ---- normalization t(L) = (L+1)/(max+1)
 eq(C.levelT(1, 1), 1, 't(1, max=1) = 1 (draft: 0,1 -> 0,255)');
@@ -111,9 +111,11 @@ eq(C.commitsForLevel(10, 10, 1, 10), 10, 'level 10/10 -> high');
 const pkeys = new Array(C.N);
 const plabels = new Array(C.N);
 const pmonths = new Array(C.W);
-C.buildGridDates(todayMs, 0, pkeys, plabels, pmonths);
+// offset -26 is the old offset-0 window: today in the LAST column, so a forward
+// plan falls off the grid end (used for the truncation / nonzero-low cases)
+C.buildGridDates(todayMs, -26, pkeys, plabels, pmonths);
 const ti = C.todayIndex(pkeys, todayMs);
-eq(ti, 365, 'plan: today index at offset 0 = 365');
+eq(ti, 365, 'plan: today index at offset -26 = 365 (last column)');
 
 const plan = { rows: [], n: 0, total: 0, dueDays: 0, shortfall: 0 };
 for (let i = 0; i < 30; i++) plan.rows.push({ key: '', label: '', level: 0, target: 0, actual: -1, left: 0, today: 0 });
@@ -165,7 +167,7 @@ eq(plan.shortfall, 10, 'a date missing from the map counts as 0 commits');
 
 C.buildGridDates(todayMs, 4, pkeys, plabels, pmonths);
 const ti4 = C.todayIndex(pkeys, todayMs);
-eq(ti4, 337, 'plan: offset +4 today index = 337');
+eq(ti4, 155, 'plan: offset +4 today index = 155');
 eq(C.buildCommitPlan(pg, pkeys, plabels, ti4, 30, 4, 0, 10, null, 0, plan), 30, 'plan caps at the requested days');
 
 C.buildGridDates(todayMs, -52, pkeys, plabels, pmonths);
@@ -176,7 +178,7 @@ eq(plan.total, 0, 'off-grid plan leaves total = 0');
 eq(plan.shortfall, 0, 'off-grid plan leaves shortfall = 0');
 
 // level 0 today -> nothing to do, but the row still exists
-C.buildGridDates(todayMs, 0, pkeys, plabels, pmonths);
+C.buildGridDates(todayMs, -26, pkeys, plabels, pmonths);
 const pg0 = new Uint8Array(C.N);
 C.buildCommitPlan(pg0, pkeys, plabels, ti, 7, 4, 0, 10, null, 0, plan);
 eq(plan.rows[0].target, 0, 'empty today -> target 0');
